@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = "https://smart-laundry-system-2.onrender.com";
 
 type Order = {
   queue_number: number;
