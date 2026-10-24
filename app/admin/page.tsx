@@ -1,128 +1,315 @@
+
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 
 const API_URL = "https://smart-laundry-system-2.onrender.com";
+const TOKEN_KEY = "laura_admin_token";
+
+const STATUSES = ["Waiting", "Washing", "Drying", "Ready", "Completed"];
+const PICKUP_STATUSES = ["Not Ready", "Ready for Pickup", "Picked Up"];
+
+type AdminUser = {
+  username?: string;
+  name?: string;
+  role?: string;
+};
 
 type Order = {
   queue_number: number;
   tracking_id: string;
   customer_name: string;
   phone: string;
-  clothes: number;
   service: string;
   status: string;
   pickup_status: string;
+  clothes?: number;
+  clothes_count?: number;
+  total_clothes?: number;
   created_at?: string;
-  completed_at?: string | null;
-  picked_up_at?: string | null;
+  booked_at?: string;
 };
 
-const STATUSES = ["Waiting", "Washing", "Drying", "Ready", "Completed"];
-const PICKUP_STATUSES = ["Not Ready", "Ready for Pickup", "Picked Up"];
+function messageFrom(data: any): string {
+  if (typeof data?.detail === "string") return data.detail;
+  if (typeof data?.message === "string") return data.message;
+  if (typeof data?.error === "string") return data.error;
+  return "Please try again.";
+}
 
-function dateLabel(value?: string | null) {
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function normalizeOrders(data: any): Order[] {
+  const list = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.orders)
+      ? data.orders
+      : Array.isArray(data?.data)
+        ? data.data
+        : [];
+
+  return list.map((item: any) => ({
+    ...item,
+    queue_number: Number(item.queue_number),
+    tracking_id: String(item.tracking_id ?? ""),
+    customer_name: String(item.customer_name ?? "Customer"),
+    phone: String(item.phone ?? ""),
+    service: String(item.service ?? "Laundry"),
+    status: String(item.status ?? "Waiting"),
+    pickup_status: String(item.pickup_status ?? "Not Ready"),
+    clothes: item.clothes ?? item.clothes_count ?? item.total_clothes ?? 0,
+  }));
+}
+
+function dateLabel(value?: string) {
   if (!value) return "—";
   const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? "—"
-    : date.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function AdminPage() {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [token, setToken] = useState("");
+  const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
+
   const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [busyId, setBusyId] = useState<number | null>(null);
+
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
 
-  const loadOrders = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch(`${API_URL}/api/orders`, { cache: "no-store" });
-      if (!response.ok) throw new Error(`Could not load orders (HTTP ${response.status}).`);
-      const data = await response.json();
-      setOrders(Array.isArray(data) ? data : (data.orders || []));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to connect to the laundry backend.");
-    } finally {
-      setLoading(false);
-    }
+  const clearSession = useCallback(() => {
+    sessionStorage.removeItem(TOKEN_KEY);
+    setToken("");
+    setAdminUser(null);
+    setOrders([]);
   }, []);
 
+  const loadOrders = useCallback(
+    async (authToken: string) => {
+      if (!authToken) return;
+
+      setLoading(true);
+      setError("");
+
+      try {
+        const response = await fetch(`${API_URL}/api/orders`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${authToken.trim()}`,
+            Accept: "application/json",
+          },
+          cache: "no-store",
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (response.status === 401 || response.status === 403) {
+          clearSession();
+          throw new Error(
+            "Your admin session was rejected. Please sign in again."
+          );
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            `Could not load orders (HTTP ${response.status}): ${messageFrom(data)}`
+          );
+        }
+
+        setOrders(normalizeOrders(data));
+      } catch (err) {
+        setError(errorText(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [clearSession]
+  );
+
   useEffect(() => {
-    void loadOrders();
+    const savedToken = sessionStorage.getItem(TOKEN_KEY);
+
+    if (savedToken) {
+      setToken(savedToken);
+      void loadOrders(savedToken);
+    }
+
+    setAuthChecking(false);
   }, [loadOrders]);
+
+  const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoggingIn(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch(`${API_URL}/api/admin/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+        }),
+        cache: "no-store",
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          `Login failed (HTTP ${response.status}): ${messageFrom(data)}`
+        );
+      }
+
+      const receivedToken = data.access_token || data.token;
+
+      if (typeof receivedToken !== "string" || !receivedToken.trim()) {
+        throw new Error("The server did not return an admin token.");
+      }
+
+      sessionStorage.setItem(TOKEN_KEY, receivedToken);
+      setToken(receivedToken);
+      setAdminUser(data.user || { username: username.trim() });
+      setPassword("");
+      setNotice("Login successful.");
+
+      await loadOrders(receivedToken);
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  const handleLogout = () => {
+    clearSession();
+    setError("");
+    setNotice("You have been logged out.");
+    setPassword("");
+  };
 
   const updateOrder = async (
     order: Order,
     field: "status" | "pickup_status",
     value: string
   ) => {
-    const previous = orders;
-    setBusyId(order.tracking_id);
-    setNotice("");
-    setError("");
+    if (!token) {
+      setError("Please sign in again.");
+      return;
+    }
 
-    // Optimistically update the display, then restore it if the API rejects the request.
-    setOrders((current) =>
-      current.map((item) =>
-        item.tracking_id === order.tracking_id ? { ...item, [field]: value } : item
-      )
-    );
+    if (
+      field === "pickup_status" &&
+      value === "Picked Up" &&
+      order.status !== "Ready" &&
+      order.status !== "Completed"
+    ) {
+      setError("Set the laundry status to Ready before pickup.");
+      return;
+    }
+
+    const endpoint =
+      field === "status"
+        ? `${API_URL}/api/orders/${order.queue_number}/status`
+        : `${API_URL}/api/orders/${order.queue_number}/pickup`;
+
+    setBusyId(order.queue_number);
+    setError("");
+    setNotice("");
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/orders/${encodeURIComponent(order.tracking_id)}/status`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ [field]: value }),
-        }
-      );
+      const response = await fetch(endpoint, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ status: value }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 401 || response.status === 403) {
+        clearSession();
+        throw new Error("Admin session expired. Please sign in again.");
+      }
 
       if (!response.ok) {
-        const detail = await response.text();
         throw new Error(
-          `Status update failed (HTTP ${response.status}). Your backend may use a different update endpoint. ${detail.slice(0, 160)}`
+          `Update failed (HTTP ${response.status}): ${messageFrom(data)}`
         );
       }
 
-      setNotice(`Updated ${order.tracking_id}.`);
-      await loadOrders();
+      setNotice("Order status updated successfully.");
+      await loadOrders(token);
     } catch (err) {
-      setOrders(previous);
-      setError(err instanceof Error ? err.message : "Could not update the order.");
+      setError(errorText(err));
     } finally {
-      setBusyId("");
+      setBusyId(null);
     }
   };
 
   const filteredOrders = orders.filter((order) => {
     const query = search.trim().toLowerCase();
+
     const matchesSearch =
       !query ||
       order.tracking_id.toLowerCase().includes(query) ||
       order.customer_name.toLowerCase().includes(query) ||
       order.phone.includes(query);
-    const matchesStatus = statusFilter === "All" || order.status === statusFilter;
-    return matchesSearch && matchesStatus;
+
+    return (
+      matchesSearch &&
+      (statusFilter === "All" || order.status === statusFilter)
+    );
   });
 
-  const activeCount = orders.filter((order) => order.status !== "Completed").length;
-  const readyCount = orders.filter(
-    (order) => order.pickup_status === "Ready for Pickup"
+  const activeCount = orders.filter(
+    (order) => order.status !== "Completed"
   ).length;
-  const completedCount = orders.filter((order) => order.status === "Completed").length;
+
+  const readyCount = orders.filter(
+    (order) =>
+      order.status === "Ready" &&
+      order.pickup_status === "Ready for Pickup"
+  ).length;
+
+  const completedCount = orders.filter(
+    (order) => order.status === "Completed"
+  ).length;
+
+  if (authChecking) {
+    return (
+      <main className="adminPage">
+        <p className="empty">Checking admin session…</p>
+      </main>
+    );
+  }
 
   return (
     <main className="adminPage">
-      <div className="ambient ambientOne" />
-      <div className="ambient ambientTwo" />
-
       <header className="topbar">
         <a className="brand" href="/">
           <span className="brandMark">L</span>
@@ -131,234 +318,352 @@ export default function AdminPage() {
             <small>ADMIN CONSOLE</small>
           </span>
         </a>
+
         <div className="topbarRight">
           <span className="liveDot" />
-          <span className="liveText">LAUNDRY OPERATIONS</span>
-          <a className="siteLink" href="/">Customer site ↗</a>
+          LAUNDRY OPERATIONS
+          {token && (
+            <button className="secondaryButton" onClick={handleLogout}>
+              Log out
+            </button>
+          )}
+          <a className="secondaryButton" href="/">
+            Customer site ↗
+          </a>
         </div>
       </header>
 
       <section className="mainContent">
-        <div className="intro">
-          <div>
-            <p className="eyebrow">CONTROL CENTRE / OVERVIEW</p>
-            <h1>Order <span>management.</span></h1>
-            <p className="subtitle">
-              View every laundry booking and manage washing and pickup progress.
-            </p>
-          </div>
-          <button className="refreshButton" onClick={() => void loadOrders()} disabled={loading}>
-            <span className={loading ? "refreshIcon spinning" : "refreshIcon"}>↻</span>
-            {loading ? "Refreshing…" : "Refresh orders"}
-          </button>
-        </div>
+        {!token ? (
+          <section className="loginWrap">
+            <div className="loginCard">
+              <p className="eyebrow">L&apos;AURA / SECURE ACCESS</p>
+              <h1>Welcome <span>back.</span></h1>
+              <p className="subtitle">
+                Sign in to manage laundry orders and pickup progress.
+              </p>
 
-        <div className="stats">
-          <article className="stat">
-            <span className="statLabel">TOTAL ORDERS</span>
-            <strong>{orders.length}</strong>
-            <span className="statHint">All bookings</span>
-          </article>
-          <article className="stat">
-            <span className="statLabel">IN PROGRESS</span>
-            <strong>{activeCount}</strong>
-            <span className="statHint">Not completed</span>
-          </article>
-          <article className="stat">
-            <span className="statLabel">READY FOR PICKUP</span>
-            <strong>{readyCount}</strong>
-            <span className="statHint">Awaiting collection</span>
-          </article>
-          <article className="stat">
-            <span className="statLabel">COMPLETED</span>
-            <strong>{completedCount}</strong>
-            <span className="statHint">Finished orders</span>
-          </article>
-        </div>
+              {error && <div className="error" role="alert">{error}</div>}
+              {notice && <div className="notice" role="status">{notice}</div>}
 
-        {notice && <div className="notice" role="status">{notice}</div>}
-        {error && <div className="error" role="alert">{error}</div>}
+              <form onSubmit={handleLogin} className="loginForm">
+                <label htmlFor="admin-username">Admin username</label>
+                <input
+                  id="admin-username"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  placeholder="Enter username"
+                  required
+                />
 
-        <section className="ordersPanel">
-          <div className="panelHeader">
-            <div>
-              <p className="eyebrow">CUSTOMER BOOKINGS</p>
-              <h2>All orders <span>({filteredOrders.length})</span></h2>
+                <label htmlFor="admin-password">Password</label>
+                <input
+                  id="admin-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="Enter password"
+                  required
+                />
+
+                <button className="primaryButton" type="submit" disabled={loggingIn}>
+                  {loggingIn ? "Signing in…" : "Sign in to dashboard"}
+                </button>
+              </form>
+
+              <p className="footnote">Authorised administrator access only.</p>
             </div>
-            <div className="filters">
-              <input
-                aria-label="Search orders"
-                placeholder="Search name, phone or tracking ID"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-              <select
-                aria-label="Filter by order status"
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value)}
+          </section>
+        ) : (
+          <>
+            <div className="intro">
+              <div>
+                <p className="eyebrow">CONTROL CENTRE / OVERVIEW</p>
+                <h1>Order <span>management.</span></h1>
+                <p className="subtitle">
+                  View bookings and manage washing and pickup progress.
+                </p>
+                <p className="signedIn">
+                  Signed in as {adminUser?.username || adminUser?.name || username}
+                </p>
+              </div>
+
+              <button
+                className="primaryButton"
+                onClick={() => void loadOrders(token)}
+                disabled={loading}
               >
-                <option>All</option>
-                {STATUSES.map((status) => <option key={status}>{status}</option>)}
-              </select>
+                {loading ? "Refreshing…" : "↻ Refresh orders"}
+              </button>
             </div>
-          </div>
 
-          {loading && orders.length === 0 ? (
-            <div className="empty">Loading orders from the backend…</div>
-          ) : filteredOrders.length === 0 ? (
-            <div className="empty">
-              <span className="emptySpark">✧</span>
-              <strong>{orders.length ? "No matching orders" : "No orders found"}</strong>
-              <p>{orders.length ? "Try a different search or status filter." : "New customer bookings will appear here when the API returns them."}</p>
+            <div className="stats">
+              <article className="stat">
+                <span>TOTAL ORDERS</span>
+                <strong>{orders.length}</strong>
+                <small>All bookings</small>
+              </article>
+              <article className="stat">
+                <span>IN PROGRESS</span>
+                <strong>{activeCount}</strong>
+                <small>Not completed</small>
+              </article>
+              <article className="stat">
+                <span>READY FOR PICKUP</span>
+                <strong>{readyCount}</strong>
+                <small>Awaiting collection</small>
+              </article>
+              <article className="stat">
+                <span>COMPLETED</span>
+                <strong>{completedCount}</strong>
+                <small>Finished orders</small>
+              </article>
             </div>
-          ) : (
-            <div className="tableWrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>ORDER</th>
-                    <th>CUSTOMER</th>
-                    <th>SERVICE</th>
-                    <th>BOOKED</th>
-                    <th>LAUNDRY STATUS</th>
-                    <th>PICKUP STATUS</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredOrders.map((order) => (
-                    <tr key={order.tracking_id}>
-                      <td>
-                        <strong className="tracking">{order.tracking_id}</strong>
-                        <span className="subline">Queue #{order.queue_number} · {order.clothes} clothes</span>
-                      </td>
-                      <td>
-                        <strong>{order.customer_name}</strong>
-                        <span className="subline">{order.phone}</span>
-                      </td>
-                      <td>{order.service}</td>
-                      <td>{dateLabel(order.created_at)}</td>
-                      <td>
-                        <select
-                          className="statusSelect"
-                          aria-label={`Laundry status for ${order.tracking_id}`}
-                          value={order.status}
-                          disabled={busyId === order.tracking_id}
-                          onChange={(event) => void updateOrder(order, "status", event.target.value)}
-                        >
-                          {STATUSES.map((status) => <option key={status}>{status}</option>)}
-                        </select>
-                      </td>
-                      <td>
-                        <select
-                          className="statusSelect pickupSelect"
-                          aria-label={`Pickup status for ${order.tracking_id}`}
-                          value={order.pickup_status}
-                          disabled={busyId === order.tracking_id}
-                          onChange={(event) => void updateOrder(order, "pickup_status", event.target.value)}
-                        >
-                          {!PICKUP_STATUSES.includes(order.pickup_status) && (
-                            <option>{order.pickup_status}</option>
-                          )}
-                          {PICKUP_STATUSES.map((status) => <option key={status}>{status}</option>)}
-                        </select>
-                        {busyId === order.tracking_id && <span className="subline">Saving…</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
 
-        <p className="footnote">
-          L&apos;AURA · Smart Laundry Queue & Pickup Manager
-          <span>Admin dashboard</span>
-        </p>
+            {notice && <div className="notice" role="status">{notice}</div>}
+            {error && <div className="error" role="alert">{error}</div>}
+
+            <section className="ordersPanel">
+              <div className="panelHeader">
+                <div>
+                  <p className="eyebrow">CUSTOMER BOOKINGS</p>
+                  <h2>All orders ({filteredOrders.length})</h2>
+                </div>
+
+                <div className="filters">
+                  <input
+                    aria-label="Search orders"
+                    placeholder="Search name, phone or tracking ID"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                  />
+
+                  <select
+                    aria-label="Filter orders by status"
+                    value={statusFilter}
+                    onChange={(event) => setStatusFilter(event.target.value)}
+                  >
+                    <option value="All">All statuses</option>
+                    {STATUSES.map((status) => (
+                      <option key={status} value={status}>{status}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {loading && orders.length === 0 ? (
+                <div className="empty">Loading orders…</div>
+              ) : filteredOrders.length === 0 ? (
+                <div className="empty">
+                  <strong>{orders.length ? "No matching orders" : "No orders found"}</strong>
+                  <p>
+                    {orders.length
+                      ? "Try another search or filter."
+                      : "Bookings will appear here when the API returns them."}
+                  </p>
+                </div>
+              ) : (
+                <div className="tableWrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>ORDER</th>
+                        <th>CUSTOMER</th>
+                        <th>SERVICE</th>
+                        <th>BOOKED</th>
+                        <th>LAUNDRY STATUS</th>
+                        <th>PICKUP STATUS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredOrders.map((order) => (
+                        <tr key={order.tracking_id || order.queue_number}>
+                          <td>
+                            <strong>{order.tracking_id || "—"}</strong>
+                            <small>
+                              Queue #{order.queue_number} · {order.clothes ?? 0} clothes
+                            </small>
+                          </td>
+                          <td>
+                            <strong>{order.customer_name}</strong>
+                            <small>{order.phone || "—"}</small>
+                          </td>
+                          <td>{order.service}</td>
+                          <td>{dateLabel(order.created_at || order.booked_at)}</td>
+                          <td>
+                            <select
+                              className="statusSelect"
+                              aria-label={`Laundry status for ${order.tracking_id}`}
+                              value={order.status}
+                              disabled={busyId === order.queue_number}
+                              onChange={(event) =>
+                                void updateOrder(order, "status", event.target.value)
+                              }
+                            >
+                              {STATUSES.map((status) => (
+                                <option key={status} value={status}>{status}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>
+                            <select
+                              className="statusSelect"
+                              aria-label={`Pickup status for ${order.tracking_id}`}
+                              value={order.pickup_status}
+                              disabled={busyId === order.queue_number}
+                              onChange={(event) =>
+                                void updateOrder(order, "pickup_status", event.target.value)
+                              }
+                            >
+                              {PICKUP_STATUSES.map((status) => (
+                                <option key={status} value={status}>{status}</option>
+                              ))}
+                            </select>
+                            {busyId === order.queue_number && <small>Saving…</small>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </>
+        )}
       </section>
 
-      <style jsx global>{`
-        :root { color-scheme: light; }
-        * { box-sizing: border-box; }
-        html, body { margin: 0; min-height: 100%; }
-        body { background: #fbf9ff; color: #40364f; font-family: Arial, Helvetica, sans-serif; }
-        button, input, select { font: inherit; }
-        button, a, select { -webkit-tap-highlight-color: transparent; }
+      <footer className="footer">
+        L&apos;AURA · Smart Laundry Queue &amp; Pickup Manager
+        <span>Admin dashboard</span>
+      </footer>
+
+      <style jsx>{`
         .adminPage {
-          min-height: 100vh; position: relative; overflow: hidden;
-          background: linear-gradient(135deg, #fbf9ff 0%, #f2ecfa 48%, #fffaf5 100%);
-          color: #40364f; isolation: isolate;
+          --ink: #29243a;
+          --muted: #827b91;
+          --accent: #7562a6;
+          --line: #e9e3f1;
+          min-height: 100vh;
+          color: var(--ink);
+          background: linear-gradient(135deg, #fbf9ff, #f2ecfa 48%, #fffaf5);
+          font-family: Arial, Helvetica, sans-serif;
         }
-        .ambient { position: absolute; width: 390px; height: 390px; border-radius: 50%; filter: blur(95px); opacity: .26; pointer-events: none; z-index: -1; }
-        .ambientOne { top: 80px; left: -180px; background: #ddcbed; }
-        .ambientTwo { top: 380px; right: -180px; background: #f1dbea; }
+        * { box-sizing: border-box; }
+        .topbar, .mainContent, .footer {
+          width: min(1440px, calc(100% - 40px));
+          margin: 0 auto;
+        }
         .topbar {
-          height: 82px; padding: 0 clamp(20px, 5vw, 76px); display: flex;
-          justify-content: space-between; align-items: center; gap: 20px;
-          border-bottom: 1px solid #e9def2; background: rgba(255, 252, 255, .8);
-          backdrop-filter: blur(18px); position: relative;
+          min-height: 84px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 20px;
+          border-bottom: 1px solid var(--line);
         }
-        .brand { display: flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
-        .brandMark { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 14px; background: linear-gradient(140deg, #f4eafb, #ded0ed); border: 1px solid #dfd0ec; color: #79648e; font-size: 23px; font-weight: 800; }
-        .brand strong { display: block; font-size: 18px; letter-spacing: 4px; }
-        .brand small { display: block; color: #9888a5; font-size: 9px; letter-spacing: 2px; margin-top: 4px; }
-        .topbarRight { display: flex; align-items: center; gap: 10px; color: #897a98; font-size: 10px; letter-spacing: 1.5px; }
-        .liveDot { width: 7px; height: 7px; background: #a4c6ad; border-radius: 50%; box-shadow: 0 0 0 4px #e8f2e9; }
-        .siteLink { margin-left: 12px; text-decoration: none; color: #6f5a84; background: #f4edf9; border: 1px solid #e4d7ef; border-radius: 10px; padding: 11px 14px; letter-spacing: 0; font-size: 12px; transition: .25s ease; }
-        .siteLink:hover { transform: translateY(-2px); background: #eee3f7; }
-        .mainContent { width: min(1440px, 100%); margin: 0 auto; padding: 54px clamp(18px, 5vw, 76px) 32px; }
-        .intro { display: flex; justify-content: space-between; align-items: end; gap: 25px; margin-bottom: 32px; }
-        .eyebrow { margin: 0 0 14px; font-size: 10px; font-weight: 700; letter-spacing: 2.3px; color: #9a87ac; }
-        .intro h1 { font-size: clamp(38px, 5vw, 62px); letter-spacing: -2.8px; line-height: 1; margin: 0; font-weight: 700; }
-        .intro h1 span, .panelHeader h2 span { color: #aa95bf; }
-        .subtitle { color: #8b7d98; margin: 14px 0 0; font-size: 14px; line-height: 1.7; }
-        .refreshButton { border: 1px solid #e1d2ed; border-radius: 12px; background: linear-gradient(135deg, #f5effa, #e7d9f2); color: #5b486d; padding: 13px 17px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: .25s ease; box-shadow: 0 5px 15px #bca7d31c; }
-        .refreshButton:hover { transform: translateY(-2px); box-shadow: 0 9px 22px #bca7d333; }
-        .refreshButton:disabled { opacity: .65; cursor: wait; }
-        .refreshIcon { display: inline-block; font-size: 17px; margin-right: 8px; vertical-align: -1px; }
-        .spinning { animation: rotate 1s linear infinite; }
-        .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 28px; }
-        .stat { min-height: 135px; padding: 23px; border: 1px solid #e8def2; border-radius: 17px; background: linear-gradient(145deg, rgba(255,255,255,.94), rgba(250,245,253,.82)); box-shadow: 0 10px 30px #977eb512; position: relative; overflow: hidden; transition: transform .3s ease, box-shadow .3s ease; }
-        .stat:after { content: ""; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 25%, #ffffff65 48%, transparent 68%); background-size: 220% 100%; animation: gleam 9s ease-in-out infinite; pointer-events: none; }
-        .stat:hover { transform: translateY(-3px); box-shadow: 0 15px 32px #977eb526; }
-        .statLabel { display: block; color: #9584a4; font-size: 9px; letter-spacing: 1.7px; font-weight: 700; }
-        .stat strong { display: block; margin-top: 14px; font-size: 34px; line-height: 1; letter-spacing: -1px; }
-        .statHint { display: block; margin-top: 9px; color: #aa9db5; font-size: 11px; }
-        .notice, .error { border-radius: 11px; padding: 13px 16px; margin-bottom: 16px; font-size: 13px; }
-        .notice { background: #edf6ee; color: #4d7856; border: 1px solid #d8eadb; }
-        .error { background: #fff1f4; color: #963c5a; border: 1px solid #f0ccd8; white-space: pre-wrap; overflow-wrap: anywhere; }
-        .ordersPanel { border: 1px solid #e7dcef; border-radius: 19px; background: rgba(255, 253, 255, .88); box-shadow: 0 15px 45px #977eb512; overflow: hidden; }
-        .panelHeader { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 25px 25px 22px; border-bottom: 1px solid #eee4f4; }
-        .panelHeader .eyebrow { margin-bottom: 9px; }
-        .panelHeader h2 { margin: 0; font-size: 25px; letter-spacing: -.8px; }
-        .filters { display: flex; gap: 10px; min-width: min(540px, 58%); }
-        .filters input, .filters select { min-width: 0; border: 1px solid #e1d3ed; border-radius: 10px; padding: 11px 12px; background: #fffaff; color: #51415f; outline: none; }
-        .filters input { flex: 1; }
-        .filters input::placeholder { color: #b0a3bb; }
-        .filters input:focus, .filters select:focus, .statusSelect:focus { border-color: #b9a4d6; box-shadow: 0 0 0 3px #b9a4d624; }
-        .tableWrap { width: 100%; overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; min-width: 1000px; text-align: left; }
-        th { background: #faf6fd; color: #9988a8; font-size: 9px; letter-spacing: 1.5px; font-weight: 700; padding: 15px 17px; white-space: nowrap; }
-        td { padding: 18px 17px; border-top: 1px solid #f0e8f5; font-size: 12px; color: #766783; vertical-align: middle; }
-        tbody tr { transition: background .2s ease; }
-        tbody tr:hover { background: #fcf8ff; }
-        td strong { display: block; color: #51415f; font-size: 12px; font-weight: 700; }
-        td .tracking { color: #806797; letter-spacing: .3px; }
-        .subline { display: block; color: #aa9db5; font-size: 10px; margin-top: 6px; }
-        .statusSelect { max-width: 165px; width: 100%; border: 1px solid #e1d3ed; border-radius: 9px; padding: 9px 27px 9px 10px; background: #f8f2fc; color: #69547c; font-size: 11px; outline: none; cursor: pointer; transition: .2s ease; }
-        .pickupSelect { background: #fbf5fb; }
-        .statusSelect:disabled { opacity: .6; cursor: wait; }
-        .empty { min-height: 230px; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 35px; text-align: center; color: #9c8bab; }
-        .emptySpark { font-size: 32px; color: #b9a4d6; margin-bottom: 10px; }
-        .empty strong { color: #5a4869; font-size: 15px; }
-        .empty p { font-size: 12px; line-height: 1.7; margin-bottom: 0; }
-        .footnote { display: flex; justify-content: space-between; gap: 15px; color: #a393b1; font-size: 10px; letter-spacing: .3px; margin: 23px 2px 0; }
-        .footnote span { letter-spacing: 1px; }
-        @keyframes gleam { 0%, 70% { background-position: 180% 0; } 100% { background-position: -180% 0; } }
-        @keyframes rotate { to { transform: rotate(360deg); } }
-        @media (max-width: 1000px) { .stats { grid-template-columns: repeat(2, minmax(0,1fr)); } .panelHeader { align-items: stretch; flex-direction: column; } .filters { min-width: 0; width: 100%; } }
-        @media (max-width: 620px) { .topbar { height: auto; min-height: 75px; padding: 14px 18px; align-items: flex-start; } .topbarRight { flex-wrap: wrap; justify-content: flex-end; font-size: 8px; } .liveText { display: none; } .siteLink { margin-left: 0; padding: 9px 10px; } .mainContent { padding-top: 35px; } .intro { align-items: flex-start; flex-direction: column; } .intro h1 { letter-spacing: -1.8px; } .stats { gap: 10px; } .stat { padding: 17px; min-height: 120px; } .stat strong { font-size: 29px; } .filters { flex-direction: column; } .panelHeader { padding: 20px; } .footnote { flex-direction: column; } }
-        @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
+        .brand {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          color: inherit;
+          text-decoration: none;
+        }
+        .brandMark {
+          display: grid;
+          place-items: center;
+          width: 44px;
+          height: 44px;
+          border-radius: 14px;
+          color: white;
+          background: var(--accent);
+          font-family: Georgia, serif;
+          font-size: 25px;
+        }
+        .brand strong { display: block; font-family: Georgia, serif; letter-spacing: 3px; font-size: 20px; }
+        .brand small { display: block; margin-top: 4px; color: var(--muted); letter-spacing: 2px; font-size: 10px; }
+        .topbarRight { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 11px; }
+        .liveDot { width: 8px; height: 8px; border-radius: 50%; background: #6a9a81; }
+        .secondaryButton {
+          border: 1px solid var(--line);
+          border-radius: 10px;
+          padding: 10px 13px;
+          background: #fff;
+          color: var(--ink);
+          text-decoration: none;
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .mainContent { padding: 46px 0 60px; }
+        .loginWrap { min-height: 65vh; display: grid; place-items: center; }
+        .loginCard {
+          width: min(100%, 440px);
+          padding: 34px;
+          border: 1px solid var(--line);
+          border-radius: 22px;
+          background: rgba(255,255,255,.86);
+          box-shadow: 0 18px 50px #78638e17;
+        }
+        .eyebrow { margin: 0 0 12px; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 2px; }
+        h1 { margin: 0; font-family: Georgia, serif; font-size: clamp(34px, 4vw, 52px); font-weight: 400; letter-spacing: -1.5px; }
+        h1 span { color: var(--accent); font-style: italic; }
+        .subtitle { color: var(--muted); font-size: 14px; line-height: 1.7; }
+        .loginForm { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
+        label { font-size: 13px; font-weight: 700; }
+        input, select { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: white; color: var(--ink); font: inherit; }
+        input:focus, select:focus { outline: 2px solid #d9c9ef; outline-offset: 1px; }
+        .primaryButton {
+          border: 0;
+          border-radius: 11px;
+          padding: 13px 18px;
+          background: var(--accent);
+          color: white;
+          font-size: 13px;
+          cursor: pointer;
+        }
+        .primaryButton:disabled { opacity: .6; cursor: wait; }
+        .loginForm .primaryButton { margin-top: 12px; }
+        .signedIn { color: var(--muted); font-size: 12px; }
+        .intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 30px; }
+        .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 15px; margin-bottom: 26px; }
+        .stat { padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.8); }
+        .stat span { display: block; color: var(--muted); font-size: 10px; letter-spacing: 1.5px; }
+        .stat strong { display: block; margin: 13px 0 8px; font-size: 34px; }
+        .stat small, td small { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+        .notice, .error { padding: 13px 15px; margin-bottom: 15px; border-radius: 10px; font-size: 13px; overflow-wrap: anywhere; }
+        .notice { color: #386b49; background: #edf6ee; border: 1px solid #d4e9d8; }
+        .error { color: #963c5a; background: #fff1f4; border: 1px solid #f0ccd8; }
+        .ordersPanel { overflow: hidden; border: 1px solid var(--line); border-radius: 17px; background: rgba(255,255,255,.9); }
+        .panelHeader { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 23px; border-bottom: 1px solid var(--line); }
+        .panelHeader h2 { margin: 0; font-size: 24px; }
+        .filters { display: flex; gap: 10px; }
+        .filters input { width: min(340px, 100%); }
+        .tableWrap { overflow-x: auto; }
+        table { width: 100%; min-width: 900px; border-collapse: collapse; text-align: left; }
+        th { padding: 15px; background: #faf6fd; color: var(--muted); font-size: 10px; letter-spacing: 1px; white-space: nowrap; }
+        td { padding: 16px 15px; border-top: 1px solid #f0e8f5; font-size: 13px; vertical-align: middle; }
+        td strong { font-size: 13px; }
+        .statusSelect { width: 155px; padding: 9px; font-size: 12px; }
+        .statusSelect:disabled { opacity: .6; }
+        .empty { min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center; color: var(--muted); }
+        .empty p { font-size: 12px; }
+        .footer { display: flex; justify-content: space-between; gap: 15px; padding: 20px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+        @media (max-width: 850px) {
+          .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .panelHeader, .intro { align-items: stretch; flex-direction: column; }
+          .filters { flex-direction: column; }
+          .filters input { width: 100%; }
+        }
+        @media (max-width: 560px) {
+          .topbar, .mainContent, .footer { width: calc(100% - 28px); }
+          .topbar { align-items: flex-start; padding: 14px 0; }
+          .topbarRight { justify-content: flex-end; }
+          .loginCard { padding: 25px 20px; }
+          .stat { padding: 15px; }
+          .stat strong { font-size: 28px; }
+          .footer { flex-direction: column; }
+        }
       `}</style>
     </main>
   );
