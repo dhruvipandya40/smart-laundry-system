@@ -1,2150 +1,365 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const API_URL = "https://smart-laundry-system-2.onrender.com";
 
-const ADMIN_USERNAME = "admin";
-const ADMIN_PASSWORD = "admin123";
-
-const statusOptions = [
-  "Waiting",
-  "Washing",
-  "Drying",
-  "Ready",
-  "Completed",
-];
-
-const pickupOptions = [
-  "Not Ready",
-  "Ready for Pickup",
-  "Picked Up",
-];
-
 type Order = {
   queue_number: number;
-  tracking_id?: string;
+  tracking_id: string;
   customer_name: string;
   phone: string;
   clothes: number;
   service: string;
   status: string;
   pickup_status: string;
+  created_at?: string;
+  completed_at?: string | null;
+  picked_up_at?: string | null;
 };
 
+const STATUSES = ["Waiting", "Washing", "Drying", "Ready", "Completed"];
+const PICKUP_STATUSES = ["Not Ready", "Ready for Pickup", "Picked Up"];
+
+function dateLabel(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "—"
+    : date.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+}
+
 export default function AdminPage() {
-  const [loggedIn, setLoggedIn] = useState(false);
-
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-
   const [orders, setOrders] = useState<Order[]>([]);
-
-  const [dashboard, setDashboard] = useState({
-    total: 0,
-    waiting: 0,
-    washing: 0,
-    drying: 0,
-    ready: 0,
-    completed: 0,
-    pickup_ready: 0,
-    picked_up: 0,
-  });
-
-  const [loading, setLoading] = useState(false);
-
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [pickupFilter, setPickupFilter] = useState("All");
 
-  const [selectedOrder, setSelectedOrder] =
-    useState<Order | null>(null);
-
-  useEffect(() => {
-    const savedLogin = localStorage.getItem(
-      "laundry_admin_logged_in"
-    );
-
-    if (savedLogin === "true") {
-      setLoggedIn(true);
+  const loadOrders = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_URL}/api/orders`, { cache: "no-store" });
+      if (!response.ok) throw new Error(`Could not load orders (HTTP ${response.status}).`);
+      const data = await response.json();
+      setOrders(Array.isArray(data) ? data : (data.orders || []));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to connect to the laundry backend.");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (!loggedIn) return;
+    void loadOrders();
+  }, [loadOrders]);
 
-    loadData();
+  const updateOrder = async (
+    order: Order,
+    field: "status" | "pickup_status",
+    value: string
+  ) => {
+    const previous = orders;
+    setBusyId(order.tracking_id);
+    setNotice("");
+    setError("");
 
-    const timer = setInterval(() => {
-      loadData();
-    }, 5000);
-
-    return () => clearInterval(timer);
-  }, [loggedIn]);
-
-  async function loadData() {
-    try {
-      const ordersResponse = await fetch(
-        `${API_URL}/api/orders`
-      );
-
-      const ordersData = await ordersResponse.json();
-
-      const dashboardResponse = await fetch(
-        `${API_URL}/api/dashboard`
-      );
-
-      const dashboardData =
-        await dashboardResponse.json();
-
-      setOrders(ordersData.orders || []);
-      setDashboard(dashboardData);
-    } catch (error) {
-      console.error(
-        "Failed to load admin data:",
-        error
-      );
-    }
-  }
-
-  function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-
-    if (
-      username === ADMIN_USERNAME &&
-      password === ADMIN_PASSWORD
-    ) {
-      localStorage.setItem(
-        "laundry_admin_logged_in",
-        "true"
-      );
-
-      setLoggedIn(true);
-      setLoginError("");
-    } else {
-      setLoginError(
-        "Invalid username or password"
-      );
-    }
-  }
-
-  function logout() {
-    localStorage.removeItem(
-      "laundry_admin_logged_in"
+    // Optimistically update the display, then restore it if the API rejects the request.
+    setOrders((current) =>
+      current.map((item) =>
+        item.tracking_id === order.tracking_id ? { ...item, [field]: value } : item
+      )
     );
-
-    setLoggedIn(false);
-    setUsername("");
-    setPassword("");
-  }
-
-  async function updateStatus(
-    queueNumber: number,
-    newStatus: string
-  ) {
-    setLoading(true);
 
     try {
       const response = await fetch(
-        `${API_URL}/api/orders/${queueNumber}/status`,
+        `${API_URL}/api/orders/${encodeURIComponent(order.tracking_id)}/status`,
         {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            status: newStatus,
-          }),
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [field]: value }),
         }
       );
 
       if (!response.ok) {
+        const detail = await response.text();
         throw new Error(
-          "Status update failed"
+          `Status update failed (HTTP ${response.status}). Your backend may use a different update endpoint. ${detail.slice(0, 160)}`
         );
       }
 
-      await loadData();
-
-      if (
-        selectedOrder?.queue_number ===
-        queueNumber
-      ) {
-        setSelectedOrder((previous) =>
-          previous
-            ? {
-                ...previous,
-                status: newStatus,
-                pickup_status:
-                  newStatus === "Ready"
-                    ? "Ready for Pickup"
-                    : newStatus === "Completed"
-                    ? "Picked Up"
-                    : previous.pickup_status,
-              }
-            : null
-        );
-      }
-    } catch (error) {
-      console.error(error);
-      alert("Status update failed");
+      setNotice(`Updated ${order.tracking_id}.`);
+      await loadOrders();
+    } catch (err) {
+      setOrders(previous);
+      setError(err instanceof Error ? err.message : "Could not update the order.");
     } finally {
-      setLoading(false);
+      setBusyId("");
     }
-  }
+  };
 
-  async function updatePickup(
-    queueNumber: number,
-    pickupStatus: string
-  ) {
-    setLoading(true);
+  const filteredOrders = orders.filter((order) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch =
+      !query ||
+      order.tracking_id.toLowerCase().includes(query) ||
+      order.customer_name.toLowerCase().includes(query) ||
+      order.phone.includes(query);
+    const matchesStatus = statusFilter === "All" || order.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
-    try {
-      const response = await fetch(
-        `${API_URL}/api/orders/${queueNumber}/pickup`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            status: pickupStatus,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(
-          "Pickup update failed"
-        );
-      }
-
-      await loadData();
-
-      if (
-        selectedOrder?.queue_number ===
-        queueNumber
-      ) {
-        setSelectedOrder((previous) =>
-          previous
-            ? {
-                ...previous,
-                pickup_status: pickupStatus,
-                status:
-                  pickupStatus === "Picked Up"
-                    ? "Completed"
-                    : previous.status,
-              }
-            : null
-        );
-      }
-    } catch (error) {
-      console.error(error);
-      alert(
-        "Pickup status update failed"
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const filteredOrders = useMemo(() => {
-    const searchText =
-      search.trim().toLowerCase();
-
-    return orders.filter((order) => {
-      const matchesSearch =
-        !searchText ||
-        order.customer_name
-          .toLowerCase()
-          .includes(searchText) ||
-        order.phone
-          .toLowerCase()
-          .includes(searchText) ||
-        order.service
-          .toLowerCase()
-          .includes(searchText) ||
-        String(order.queue_number).includes(
-          searchText
-        ) ||
-        (order.tracking_id || "")
-          .toLowerCase()
-          .includes(searchText);
-
-      const matchesStatus =
-        statusFilter === "All" ||
-        order.status === statusFilter;
-
-      const matchesPickup =
-        pickupFilter === "All" ||
-        order.pickup_status === pickupFilter;
-
-      return (
-        matchesSearch &&
-        matchesStatus &&
-        matchesPickup
-      );
-    });
-  }, [
-    orders,
-    search,
-    statusFilter,
-    pickupFilter,
-  ]);
-
-  const totalClothes = useMemo(() => {
-    return orders.reduce(
-      (total, order) =>
-        total + Number(order.clothes || 0),
-      0
-    );
-  }, [orders]);
-
-  const activeOrders =
-    dashboard.waiting +
-    dashboard.washing +
-    dashboard.drying;
-
-  const completedPercentage =
-    dashboard.total > 0
-      ? Math.round(
-          (dashboard.completed /
-            dashboard.total) *
-            100
-        )
-      : 0;
-
-  const pickupPending =
-    dashboard.pickup_ready;
-
-  function statusBadge(status: string) {
-    const styles: Record<
-      string,
-      { background: string; color: string }
-    > = {
-      Waiting: {
-        background:
-          "rgba(255,193,7,0.12)",
-        color: "#ffd76a",
-      },
-      Washing: {
-        background:
-          "rgba(80,160,255,0.12)",
-        color: "#78b7ff",
-      },
-      Drying: {
-        background:
-          "rgba(180,120,255,0.12)",
-        color: "#c49aff",
-      },
-      Ready: {
-        background:
-          "rgba(80,220,150,0.12)",
-        color: "#72e3a5",
-      },
-      Completed: {
-        background:
-          "rgba(130,140,155,0.12)",
-        color: "#aeb7c5",
-      },
-    };
-
-    const style =
-      styles[status] || styles.Waiting;
-
-    return (
-      <span
-        style={{
-          display: "inline-block",
-          padding: "7px 10px",
-          borderRadius: "999px",
-          background: style.background,
-          color: style.color,
-          fontSize: "12px",
-          fontWeight: "700",
-        }}
-      >
-        {status}
-      </span>
-    );
-  }
-
-  if (!loggedIn) {
-    return (
-      <main
-        style={{
-          minHeight: "100vh",
-          background:
-            "radial-gradient(circle at top, #172033 0%, #080b12 45%, #030407 100%)",
-          color: "#fff",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "20px",
-          fontFamily: "Arial, sans-serif",
-        }}
-      >
-        <div
-          style={{
-            width: "100%",
-            maxWidth: "430px",
-            background:
-              "rgba(15, 20, 31, 0.95)",
-            border:
-              "1px solid rgba(255,255,255,0.1)",
-            borderRadius: "24px",
-            padding: "40px",
-            boxShadow:
-              "0 25px 80px rgba(0,0,0,0.5)",
-          }}
-        >
-          <div
-            style={{
-              textAlign: "center",
-              marginBottom: "32px",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "42px",
-                marginBottom: "10px",
-              }}
-            >
-              🧺
-            </div>
-
-            <h1
-              style={{
-                margin: 0,
-                fontSize: "30px",
-                letterSpacing: "3px",
-              }}
-            >
-              L&apos;AURA
-            </h1>
-
-            <p
-              style={{
-                color: "#8f9aaa",
-                marginTop: "8px",
-              }}
-            >
-              Laundry Management System
-            </p>
-
-            <div
-              style={{
-                display: "inline-block",
-                marginTop: "12px",
-                padding: "7px 14px",
-                borderRadius: "20px",
-                background:
-                  "rgba(255,255,255,0.06)",
-                color: "#aeb8c8",
-                fontSize: "12px",
-                letterSpacing: "1px",
-              }}
-            >
-              ADMIN ACCESS
-            </div>
-          </div>
-
-          <form onSubmit={handleLogin}>
-            <label
-              style={{
-                display: "block",
-                marginBottom: "8px",
-                color: "#b8c0ce",
-                fontSize: "14px",
-              }}
-            >
-              Username
-            </label>
-
-            <input
-              type="text"
-              value={username}
-              onChange={(e) =>
-                setUsername(e.target.value)
-              }
-              placeholder="Enter admin username"
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                padding: "15px",
-                borderRadius: "12px",
-                border:
-                  "1px solid #293241",
-                background: "#0a0e15",
-                color: "#fff",
-                outline: "none",
-                marginBottom: "18px",
-                fontSize: "15px",
-              }}
-            />
-
-            <label
-              style={{
-                display: "block",
-                marginBottom: "8px",
-                color: "#b8c0ce",
-                fontSize: "14px",
-              }}
-            >
-              Password
-            </label>
-
-            <input
-              type="password"
-              value={password}
-              onChange={(e) =>
-                setPassword(e.target.value)
-              }
-              placeholder="Enter admin password"
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                padding: "15px",
-                borderRadius: "12px",
-                border:
-                  "1px solid #293241",
-                background: "#0a0e15",
-                color: "#fff",
-                outline: "none",
-                marginBottom: "18px",
-                fontSize: "15px",
-              }}
-            />
-
-            {loginError && (
-              <div
-                style={{
-                  background:
-                    "rgba(255,70,70,0.1)",
-                  border:
-                    "1px solid rgba(255,70,70,0.3)",
-                  color: "#ff8b8b",
-                  padding: "12px",
-                  borderRadius: "10px",
-                  marginBottom: "18px",
-                  fontSize: "14px",
-                }}
-              >
-                {loginError}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              style={{
-                width: "100%",
-                padding: "15px",
-                border: "none",
-                borderRadius: "12px",
-                background: "#ffffff",
-                color: "#080b12",
-                fontWeight: "700",
-                fontSize: "15px",
-                cursor: "pointer",
-              }}
-            >
-              LOGIN TO ADMIN
-            </button>
-          </form>
-        </div>
-      </main>
-    );
-  }
+  const activeCount = orders.filter((order) => order.status !== "Completed").length;
+  const readyCount = orders.filter(
+    (order) => order.pickup_status === "Ready for Pickup"
+  ).length;
+  const completedCount = orders.filter((order) => order.status === "Completed").length;
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background:
-          "radial-gradient(circle at top, #172033 0%, #080b12 40%, #030407 100%)",
-        color: "#fff",
-        padding: "30px",
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: "1500px",
-          margin: "0 auto",
-        }}
-      >
-        {/* HEADER */}
+    <main className="adminPage">
+      <div className="ambient ambientOne" />
+      <div className="ambient ambientTwo" />
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "20px",
-            marginBottom: "35px",
-            flexWrap: "wrap",
-          }}
-        >
+      <header className="topbar">
+        <a className="brand" href="/">
+          <span className="brandMark">L</span>
+          <span>
+            <strong>L&apos;AURA</strong>
+            <small>ADMIN CONSOLE</small>
+          </span>
+        </a>
+        <div className="topbarRight">
+          <span className="liveDot" />
+          <span className="liveText">LAUNDRY OPERATIONS</span>
+          <a className="siteLink" href="/">Customer site ↗</a>
+        </div>
+      </header>
+
+      <section className="mainContent">
+        <div className="intro">
           <div>
-            <div
-              style={{
-                color: "#8d99aa",
-                fontSize: "12px",
-                letterSpacing: "3px",
-                marginBottom: "8px",
-              }}
-            >
-              L&apos;AURA
-            </div>
-
-            <h1
-              style={{
-                margin: 0,
-                fontSize: "36px",
-              }}
-            >
-              Admin Dashboard
-            </h1>
-
-            <p
-              style={{
-                color: "#7f8a9b",
-                marginTop: "8px",
-              }}
-            >
-              Laundry Queue & Pickup Management
+            <p className="eyebrow">CONTROL CENTRE / OVERVIEW</p>
+            <h1>Order <span>management.</span></h1>
+            <p className="subtitle">
+              View every laundry booking and manage washing and pickup progress.
             </p>
           </div>
-
-          <button
-            onClick={logout}
-            style={{
-              background: "transparent",
-              border:
-                "1px solid #394353",
-              color: "#d6dce5",
-              padding: "11px 18px",
-              borderRadius: "10px",
-              cursor: "pointer",
-            }}
-          >
-            Logout
+          <button className="refreshButton" onClick={() => void loadOrders()} disabled={loading}>
+            <span className={loading ? "refreshIcon spinning" : "refreshIcon"}>↻</span>
+            {loading ? "Refreshing…" : "Refresh orders"}
           </button>
         </div>
 
-        {/* MAIN STATS */}
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(160px, 1fr))",
-            gap: "15px",
-            marginBottom: "30px",
-          }}
-        >
-          {[
-            ["Total Orders", dashboard.total],
-            ["Waiting", dashboard.waiting],
-            ["Washing", dashboard.washing],
-            ["Drying", dashboard.drying],
-            ["Ready", dashboard.ready],
-            ["Completed", dashboard.completed],
-            ["Pickup Ready", dashboard.pickup_ready],
-            ["Picked Up", dashboard.picked_up],
-          ].map(([title, value]) => (
-            <div
-              key={title}
-              style={{
-                background:
-                  "rgba(16,21,32,0.9)",
-                border:
-                  "1px solid #202938",
-                borderRadius: "18px",
-                padding: "20px",
-              }}
-            >
-              <div
-                style={{
-                  color: "#7f8a9b",
-                  fontSize: "12px",
-                  marginBottom: "10px",
-                }}
-              >
-                {title}
-              </div>
-
-              <div
-                style={{
-                  fontSize: "30px",
-                  fontWeight: "700",
-                }}
-              >
-                {value}
-              </div>
-            </div>
-          ))}
+        <div className="stats">
+          <article className="stat">
+            <span className="statLabel">TOTAL ORDERS</span>
+            <strong>{orders.length}</strong>
+            <span className="statHint">All bookings</span>
+          </article>
+          <article className="stat">
+            <span className="statLabel">IN PROGRESS</span>
+            <strong>{activeCount}</strong>
+            <span className="statHint">Not completed</span>
+          </article>
+          <article className="stat">
+            <span className="statLabel">READY FOR PICKUP</span>
+            <strong>{readyCount}</strong>
+            <span className="statHint">Awaiting collection</span>
+          </article>
+          <article className="stat">
+            <span className="statLabel">COMPLETED</span>
+            <strong>{completedCount}</strong>
+            <span className="statHint">Finished orders</span>
+          </article>
         </div>
 
-        {/* ANALYTICS */}
+        {notice && <div className="notice" role="status">{notice}</div>}
+        {error && <div className="error" role="alert">{error}</div>}
 
-        <section
-          style={{
-            background:
-              "rgba(10,14,21,0.92)",
-            border:
-              "1px solid #202938",
-            borderRadius: "22px",
-            padding: "25px",
-            marginBottom: "30px",
-          }}
-        >
-          <div
-            style={{
-              marginBottom: "22px",
-            }}
-          >
-            <div
-              style={{
-                color: "#8d99aa",
-                fontSize: "11px",
-                letterSpacing: "2px",
-                marginBottom: "7px",
-              }}
-            >
-              LIVE ANALYTICS
+        <section className="ordersPanel">
+          <div className="panelHeader">
+            <div>
+              <p className="eyebrow">CUSTOMER BOOKINGS</p>
+              <h2>All orders <span>({filteredOrders.length})</span></h2>
             </div>
-
-            <h2
-              style={{
-                margin: 0,
-                fontSize: "23px",
-              }}
-            >
-              Laundry Performance
-            </h2>
-
-            <p
-              style={{
-                color: "#727d8e",
-                margin:
-                  "7px 0 0",
-                fontSize: "13px",
-              }}
-            >
-              Real-time overview of your
-              laundry operations
-            </p>
-          </div>
-
-          {/* ANALYTIC CARDS */}
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(210px, 1fr))",
-              gap: "15px",
-            }}
-          >
-            {/* CLOTHES */}
-
-            <div
-              style={{
-                background:
-                  "linear-gradient(145deg, #111722, #0c1119)",
-                border:
-                  "1px solid #252f3e",
-                borderRadius: "18px",
-                padding: "22px",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: "26px",
-                  marginBottom: "15px",
-                }}
-              >
-                🧺
-              </div>
-
-              <div
-                style={{
-                  color: "#7d8999",
-                  fontSize: "12px",
-                }}
-              >
-                TOTAL CLOTHES
-              </div>
-
-              <div
-                style={{
-                  fontSize: "32px",
-                  fontWeight: "700",
-                  marginTop: "8px",
-                }}
-              >
-                {totalClothes}
-              </div>
-
-              <div
-                style={{
-                  color: "#667283",
-                  fontSize: "12px",
-                  marginTop: "6px",
-                }}
-              >
-                Items in all orders
-              </div>
-            </div>
-
-            {/* ACTIVE */}
-
-            <div
-              style={{
-                background:
-                  "linear-gradient(145deg, #111722, #0c1119)",
-                border:
-                  "1px solid #252f3e",
-                borderRadius: "18px",
-                padding: "22px",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: "26px",
-                  marginBottom: "15px",
-                }}
-              >
-                ⚡
-              </div>
-
-              <div
-                style={{
-                  color: "#7d8999",
-                  fontSize: "12px",
-                }}
-              >
-                ACTIVE ORDERS
-              </div>
-
-              <div
-                style={{
-                  fontSize: "32px",
-                  fontWeight: "700",
-                  marginTop: "8px",
-                }}
-              >
-                {activeOrders}
-              </div>
-
-              <div
-                style={{
-                  color: "#667283",
-                  fontSize: "12px",
-                  marginTop: "6px",
-                }}
-              >
-                Currently being processed
-              </div>
-            </div>
-
-            {/* PICKUP */}
-
-            <div
-              style={{
-                background:
-                  "linear-gradient(145deg, #111722, #0c1119)",
-                border:
-                  "1px solid #252f3e",
-                borderRadius: "18px",
-                padding: "22px",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: "26px",
-                  marginBottom: "15px",
-                }}
-              >
-                📦
-              </div>
-
-              <div
-                style={{
-                  color: "#7d8999",
-                  fontSize: "12px",
-                }}
-              >
-                PICKUP PENDING
-              </div>
-
-              <div
-                style={{
-                  fontSize: "32px",
-                  fontWeight: "700",
-                  marginTop: "8px",
-                }}
-              >
-                {pickupPending}
-              </div>
-
-              <div
-                style={{
-                  color: "#667283",
-                  fontSize: "12px",
-                  marginTop: "6px",
-                }}
-              >
-                Ready for customers
-              </div>
-            </div>
-
-            {/* COMPLETION */}
-
-            <div
-              style={{
-                background:
-                  "linear-gradient(145deg, #111722, #0c1119)",
-                border:
-                  "1px solid #252f3e",
-                borderRadius: "18px",
-                padding: "22px",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: "26px",
-                  marginBottom: "15px",
-                }}
-              >
-                ✓
-              </div>
-
-              <div
-                style={{
-                  color: "#7d8999",
-                  fontSize: "12px",
-                }}
-              >
-                COMPLETION RATE
-              </div>
-
-              <div
-                style={{
-                  fontSize: "32px",
-                  fontWeight: "700",
-                  marginTop: "8px",
-                }}
-              >
-                {completedPercentage}%
-              </div>
-
-              <div
-                style={{
-                  height: "6px",
-                  background:
-                    "#202938",
-                  borderRadius:
-                    "99px",
-                  marginTop: "12px",
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    width:
-                      `${completedPercentage}%`,
-                    height: "100%",
-                    background:
-                      "#ffffff",
-                    borderRadius:
-                      "99px",
-                    transition:
-                      "width 0.5s ease",
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* STATUS DISTRIBUTION */}
-
-          <div
-            style={{
-              marginTop: "25px",
-              borderTop:
-                "1px solid #202938",
-              paddingTop: "25px",
-            }}
-          >
-            <div
-              style={{
-                color: "#737e8e",
-                fontSize: "12px",
-                marginBottom: "15px",
-                textTransform:
-                  "uppercase",
-                letterSpacing:
-                  "1px",
-              }}
-            >
-              Current Order Distribution
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gap: "12px",
-              }}
-            >
-              {statusOptions.map(
-                (status) => {
-                  const count =
-                    dashboard[
-                      status.toLowerCase() as keyof typeof dashboard
-                    ] || 0;
-
-                  const percentage =
-                    dashboard.total > 0
-                      ? Math.round(
-                          (Number(count) /
-                            dashboard.total) *
-                            100
-                        )
-                      : 0;
-
-                  return (
-                    <div
-                      key={status}
-                      style={{
-                        display:
-                          "grid",
-                        gridTemplateColumns:
-                          "90px 1fr 45px",
-                        alignItems:
-                          "center",
-                        gap: "12px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          color:
-                            "#aeb7c5",
-                          fontSize:
-                            "13px",
-                        }}
-                      >
-                        {status}
-                      </div>
-
-                      <div
-                        style={{
-                          height:
-                            "8px",
-                          background:
-                            "#202938",
-                          borderRadius:
-                            "99px",
-                          overflow:
-                            "hidden",
-                        }}
-                      >
-                        <div
-                          style={{
-                            width:
-                              `${percentage}%`,
-                            height:
-                              "100%",
-                            background:
-                              "#dce2ea",
-                            borderRadius:
-                              "99px",
-                            transition:
-                              "width 0.5s ease",
-                          }}
-                        />
-                      </div>
-
-                      <div
-                        style={{
-                          textAlign:
-                            "right",
-                          color:
-                            "#7f8a9b",
-                          fontSize:
-                            "12px",
-                        }}
-                      >
-                        {count}
-                      </div>
-                    </div>
-                  );
-                }
-              )}
-            </div>
-          </div>
-        </section>
-
-        {/* ORDER MANAGEMENT */}
-
-        <section
-          style={{
-            background:
-              "rgba(10,14,21,0.92)",
-            border:
-              "1px solid #202938",
-            borderRadius: "22px",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              padding: "24px",
-              borderBottom:
-                "1px solid #202938",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent:
-                  "space-between",
-                alignItems: "center",
-                gap: "15px",
-                flexWrap: "wrap",
-              }}
-            >
-              <div>
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: "22px",
-                  }}
-                >
-                  Order Management
-                </h2>
-
-                <p
-                  style={{
-                    color: "#727d8e",
-                    margin:
-                      "7px 0 0",
-                    fontSize: "13px",
-                  }}
-                >
-                  Search, filter and manage
-                  every laundry order
-                </p>
-              </div>
-
-              <button
-                onClick={loadData}
-                style={{
-                  border:
-                    "1px solid #303a4a",
-                  background:
-                    "#111722",
-                  color:
-                    "#dce2ea",
-                  padding:
-                    "10px 16px",
-                  borderRadius:
-                    "9px",
-                  cursor:
-                    "pointer",
-                }}
-              >
-                Refresh
-              </button>
-            </div>
-
-            {/* SEARCH */}
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "minmax(250px, 2fr) repeat(2, minmax(170px, 1fr))",
-                gap: "12px",
-                marginTop: "22px",
-              }}
-            >
+            <div className="filters">
               <input
+                aria-label="Search orders"
+                placeholder="Search name, phone or tracking ID"
                 value={search}
-                onChange={(e) =>
-                  setSearch(e.target.value)
-                }
-                placeholder="Search customer, phone, queue, service or tracking ID..."
-                style={{
-                  width: "100%",
-                  boxSizing:
-                    "border-box",
-                  padding:
-                    "13px 15px",
-                  borderRadius:
-                    "11px",
-                  border:
-                    "1px solid #303a4a",
-                  background:
-                    "#0a0e15",
-                  color:
-                    "#fff",
-                  outline:
-                    "none",
-                  fontSize:
-                    "14px",
-                }}
+                onChange={(event) => setSearch(event.target.value)}
               />
-
               <select
-                value={
-                  statusFilter
-                }
-                onChange={(e) =>
-                  setStatusFilter(
-                    e.target.value
-                  )
-                }
-                style={{
-                  padding:
-                    "13px 15px",
-                  borderRadius:
-                    "11px",
-                  border:
-                    "1px solid #303a4a",
-                  background:
-                    "#0a0e15",
-                  color:
-                    "#fff",
-                  outline:
-                    "none",
-                  fontSize:
-                    "14px",
-                }}
+                aria-label="Filter by order status"
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
               >
-                <option value="All">
-                  All Laundry Status
-                </option>
-
-                {statusOptions.map(
-                  (status) => (
-                    <option
-                      key={status}
-                      value={status}
-                    >
-                      {status}
-                    </option>
-                  )
-                )}
+                <option>All</option>
+                {STATUSES.map((status) => <option key={status}>{status}</option>)}
               </select>
-
-              <select
-                value={
-                  pickupFilter
-                }
-                onChange={(e) =>
-                  setPickupFilter(
-                    e.target.value
-                  )
-                }
-                style={{
-                  padding:
-                    "13px 15px",
-                  borderRadius:
-                    "11px",
-                  border:
-                    "1px solid #303a4a",
-                  background:
-                    "#0a0e15",
-                  color:
-                    "#fff",
-                  outline:
-                    "none",
-                  fontSize:
-                    "14px",
-                }}
-              >
-                <option value="All">
-                  All Pickup Status
-                </option>
-
-                {pickupOptions.map(
-                  (status) => (
-                    <option
-                      key={status}
-                      value={status}
-                    >
-                      {status}
-                    </option>
-                  )
-                )}
-              </select>
-            </div>
-
-            <div
-              style={{
-                marginTop: "14px",
-                color: "#687384",
-                fontSize: "12px",
-              }}
-            >
-              Showing{" "}
-              <strong
-                style={{
-                  color:
-                    "#cfd6df",
-                }}
-              >
-                {
-                  filteredOrders.length
-                }
-              </strong>{" "}
-              of{" "}
-              {orders.length}{" "}
-              orders
             </div>
           </div>
 
-          {filteredOrders.length ===
-          0 ? (
-            <div
-              style={{
-                padding:
-                  "65px 20px",
-                textAlign:
-                  "center",
-                color:
-                  "#6e7888",
-              }}
-            >
-              <div
-                style={{
-                  fontSize:
-                    "35px",
-                  marginBottom:
-                    "12px",
-                }}
-              >
-                🔎
-              </div>
-
-              <div
-                style={{
-                  color:
-                    "#b8c0cc",
-                  fontSize:
-                    "16px",
-                  marginBottom:
-                    "6px",
-                }}
-              >
-                No matching orders
-              </div>
-
-              <div
-                style={{
-                  fontSize:
-                    "13px",
-                }}
-              >
-                Try changing
-                your search or
-                filters.
-              </div>
+          {loading && orders.length === 0 ? (
+            <div className="empty">Loading orders from the backend…</div>
+          ) : filteredOrders.length === 0 ? (
+            <div className="empty">
+              <span className="emptySpark">✧</span>
+              <strong>{orders.length ? "No matching orders" : "No orders found"}</strong>
+              <p>{orders.length ? "Try a different search or status filter." : "New customer bookings will appear here when the API returns them."}</p>
             </div>
           ) : (
-            <div
-              style={{
-                overflowX:
-                  "auto",
-              }}
-            >
-              <table
-                style={{
-                  width:
-                    "100%",
-                  borderCollapse:
-                    "collapse",
-                  minWidth:
-                    "1250px",
-                }}
-              >
+            <div className="tableWrap">
+              <table>
                 <thead>
-                  <tr
-                    style={{
-                      color:
-                        "#737e8e",
-                      fontSize:
-                        "12px",
-                      textTransform:
-                        "uppercase",
-                      letterSpacing:
-                        "1px",
-                    }}
-                  >
-                    <th
-                      style={{
-                        padding:
-                          "18px",
-                        textAlign:
-                          "left",
-                      }}
-                    >
-                      Queue
-                    </th>
-
-                    <th
-                      style={{
-                        padding:
-                          "18px",
-                        textAlign:
-                          "left",
-                      }}
-                    >
-                      Customer
-                    </th>
-
-                    <th
-                      style={{
-                        padding:
-                          "18px",
-                        textAlign:
-                          "left",
-                      }}
-                    >
-                      Service
-                    </th>
-
-                    <th
-                      style={{
-                        padding:
-                          "18px",
-                        textAlign:
-                          "left",
-                      }}
-                    >
-                      Clothes
-                    </th>
-
-                    <th
-                      style={{
-                        padding:
-                          "18px",
-                        textAlign:
-                          "left",
-                      }}
-                    >
-                      Laundry
-                    </th>
-
-                    <th
-                      style={{
-                        padding:
-                          "18px",
-                        textAlign:
-                          "left",
-                      }}
-                    >
-                      Pickup
-                    </th>
-
-                    <th
-                      style={{
-                        padding:
-                          "18px",
-                        textAlign:
-                          "left",
-                      }}
-                    >
-                      Action
-                    </th>
+                  <tr>
+                    <th>ORDER</th>
+                    <th>CUSTOMER</th>
+                    <th>SERVICE</th>
+                    <th>BOOKED</th>
+                    <th>LAUNDRY STATUS</th>
+                    <th>PICKUP STATUS</th>
                   </tr>
                 </thead>
-
                 <tbody>
-                  {filteredOrders.map(
-                    (order) => (
-                      <tr
-                        key={
-                          order.queue_number
-                        }
-                        style={{
-                          borderTop:
-                            "1px solid #1c2430",
-                        }}
-                      >
-                        <td
-                          style={{
-                            padding:
-                              "20px 18px",
-                            fontWeight:
-                              "700",
-                          }}
+                  {filteredOrders.map((order) => (
+                    <tr key={order.tracking_id}>
+                      <td>
+                        <strong className="tracking">{order.tracking_id}</strong>
+                        <span className="subline">Queue #{order.queue_number} · {order.clothes} clothes</span>
+                      </td>
+                      <td>
+                        <strong>{order.customer_name}</strong>
+                        <span className="subline">{order.phone}</span>
+                      </td>
+                      <td>{order.service}</td>
+                      <td>{dateLabel(order.created_at)}</td>
+                      <td>
+                        <select
+                          className="statusSelect"
+                          aria-label={`Laundry status for ${order.tracking_id}`}
+                          value={order.status}
+                          disabled={busyId === order.tracking_id}
+                          onChange={(event) => void updateOrder(order, "status", event.target.value)}
                         >
-                          #
-                          {
-                            order.queue_number
-                          }
-                        </td>
-
-                        <td
-                          style={{
-                            padding:
-                              "20px 18px",
-                          }}
+                          {STATUSES.map((status) => <option key={status}>{status}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <select
+                          className="statusSelect pickupSelect"
+                          aria-label={`Pickup status for ${order.tracking_id}`}
+                          value={order.pickup_status}
+                          disabled={busyId === order.tracking_id}
+                          onChange={(event) => void updateOrder(order, "pickup_status", event.target.value)}
                         >
-                          <div
-                            style={{
-                              fontWeight:
-                                "600",
-                            }}
-                          >
-                            {
-                              order.customer_name
-                            }
-                          </div>
-
-                          <div
-                            style={{
-                              color:
-                                "#727d8e",
-                              fontSize:
-                                "12px",
-                              marginTop:
-                                "5px",
-                            }}
-                          >
-                            {order.phone}
-                          </div>
-                        </td>
-
-                        <td
-                          style={{
-                            padding:
-                              "20px 18px",
-                          }}
-                        >
-                          {
-                            order.service
-                          }
-                        </td>
-
-                        <td
-                          style={{
-                            padding:
-                              "20px 18px",
-                            color:
-                              "#9aa5b5",
-                          }}
-                        >
-                          {
-                            order.clothes
-                          }
-                        </td>
-
-                        <td
-                          style={{
-                            padding:
-                              "20px 18px",
-                          }}
-                        >
-                          <select
-                            value={
-                              order.status
-                            }
-                            disabled={
-                              loading
-                            }
-                            onChange={(
-                              e
-                            ) =>
-                              updateStatus(
-                                order.queue_number,
-                                e.target
-                                  .value
-                              )
-                            }
-                            style={{
-                              background:
-                                "#111722",
-                              color:
-                                "#fff",
-                              border:
-                                "1px solid #303a4a",
-                              borderRadius:
-                                "9px",
-                              padding:
-                                "10px 12px",
-                              cursor:
-                                "pointer",
-                            }}
-                          >
-                            {statusOptions.map(
-                              (
-                                status
-                              ) => (
-                                <option
-                                  key={
-                                    status
-                                  }
-                                  value={
-                                    status
-                                  }
-                                >
-                                  {
-                                    status
-                                  }
-                                </option>
-                              )
-                            )}
-                          </select>
-                        </td>
-
-                        <td
-                          style={{
-                            padding:
-                              "20px 18px",
-                          }}
-                        >
-                          <select
-                            value={
-                              order.pickup_status
-                            }
-                            disabled={
-                              loading
-                            }
-                            onChange={(
-                              e
-                            ) =>
-                              updatePickup(
-                                order.queue_number,
-                                e.target
-                                  .value
-                              )
-                            }
-                            style={{
-                              background:
-                                "#111722",
-                              color:
-                                "#fff",
-                              border:
-                                "1px solid #303a4a",
-                              borderRadius:
-                                "9px",
-                              padding:
-                                "10px 12px",
-                              cursor:
-                                "pointer",
-                            }}
-                          >
-                            {pickupOptions.map(
-                              (
-                                status
-                              ) => (
-                                <option
-                                  key={
-                                    status
-                                  }
-                                  value={
-                                    status
-                                  }
-                                >
-                                  {
-                                    status
-                                  }
-                                </option>
-                              )
-                            )}
-                          </select>
-                        </td>
-
-                        <td
-                          style={{
-                            padding:
-                              "20px 18px",
-                          }}
-                        >
-                          <button
-                            onClick={() =>
-                              setSelectedOrder(
-                                order
-                              )
-                            }
-                            style={{
-                              background:
-                                "#fff",
-                              color:
-                                "#080b12",
-                              border:
-                                "none",
-                              padding:
-                                "10px 14px",
-                              borderRadius:
-                                "9px",
-                              fontWeight:
-                                "700",
-                              cursor:
-                                "pointer",
-                            }}
-                          >
-                            View Details
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  )}
+                          {!PICKUP_STATUSES.includes(order.pickup_status) && (
+                            <option>{order.pickup_status}</option>
+                          )}
+                          {PICKUP_STATUSES.map((status) => <option key={status}>{status}</option>)}
+                        </select>
+                        {busyId === order.tracking_id && <span className="subline">Saving…</span>}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           )}
         </section>
-      </div>
 
-      {/* ORDER DETAILS MODAL */}
+        <p className="footnote">
+          L&apos;AURA · Smart Laundry Queue & Pickup Manager
+          <span>Admin dashboard</span>
+        </p>
+      </section>
 
-      {selectedOrder && (
-        <div
-          onClick={() =>
-            setSelectedOrder(null)
-          }
-          style={{
-            position: "fixed",
-            inset: 0,
-            background:
-              "rgba(0,0,0,0.72)",
-            backdropFilter:
-              "blur(8px)",
-            display: "flex",
-            alignItems:
-              "center",
-            justifyContent:
-              "center",
-            padding: "20px",
-            zIndex: 9999,
-          }}
-        >
-          <div
-            onClick={(e) =>
-              e.stopPropagation()
-            }
-            style={{
-              width: "100%",
-              maxWidth: "600px",
-              maxHeight:
-                "90vh",
-              overflowY:
-                "auto",
-              background:
-                "#0c111a",
-              border:
-                "1px solid #293241",
-              borderRadius:
-                "24px",
-              padding: "28px",
-              boxShadow:
-                "0 30px 100px rgba(0,0,0,0.65)",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent:
-                  "space-between",
-                alignItems:
-                  "flex-start",
-                gap: "15px",
-                marginBottom:
-                  "25px",
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    color:
-                      "#778395",
-                    fontSize:
-                      "11px",
-                    letterSpacing:
-                      "2px",
-                    marginBottom:
-                      "7px",
-                  }}
-                >
-                  ORDER DETAILS
-                </div>
-
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize:
-                      "28px",
-                  }}
-                >
-                  Queue #
-                  {
-                    selectedOrder.queue_number
-                  }
-                </h2>
-              </div>
-
-              <button
-                onClick={() =>
-                  setSelectedOrder(
-                    null
-                  )
-                }
-                style={{
-                  width:
-                    "38px",
-                  height:
-                    "38px",
-                  borderRadius:
-                    "50%",
-                  border:
-                    "1px solid #303a4a",
-                  background:
-                    "#111722",
-                  color:
-                    "#fff",
-                  fontSize:
-                    "20px",
-                  cursor:
-                    "pointer",
-                }}
-              >
-                ×
-              </button>
-            </div>
-
-            <div
-              style={{
-                display:
-                  "grid",
-                gridTemplateColumns:
-                  "1fr 1fr",
-                gap: "12px",
-                marginBottom:
-                  "24px",
-              }}
-            >
-              <div
-                style={{
-                  background:
-                    "#111722",
-                  border:
-                    "1px solid #202938",
-                  borderRadius:
-                    "15px",
-                  padding:
-                    "17px",
-                }}
-              >
-                <div
-                  style={{
-                    color:
-                      "#737e8e",
-                    fontSize:
-                      "11px",
-                    marginBottom:
-                      "8px",
-                  }}
-                >
-                  LAUNDRY STATUS
-                </div>
-
-                {statusBadge(
-                  selectedOrder.status
-                )}
-              </div>
-
-              <div
-                style={{
-                  background:
-                    "#111722",
-                  border:
-                    "1px solid #202938",
-                  borderRadius:
-                    "15px",
-                  padding:
-                    "17px",
-                }}
-              >
-                <div
-                  style={{
-                    color:
-                      "#737e8e",
-                    fontSize:
-                      "11px",
-                    marginBottom:
-                      "8px",
-                  }}
-                >
-                  PICKUP STATUS
-                </div>
-
-                <span
-                  style={{
-                    display:
-                      "inline-block",
-                    padding:
-                      "7px 10px",
-                    borderRadius:
-                      "999px",
-                    background:
-                      selectedOrder.pickup_status ===
-                      "Picked Up"
-                        ? "rgba(80,220,150,0.12)"
-                        : selectedOrder.pickup_status ===
-                          "Ready for Pickup"
-                        ? "rgba(80,160,255,0.12)"
-                        : "rgba(255,193,7,0.12)",
-                    color:
-                      selectedOrder.pickup_status ===
-                      "Picked Up"
-                        ? "#72e3a5"
-                        : selectedOrder.pickup_status ===
-                          "Ready for Pickup"
-                        ? "#78b7ff"
-                        : "#ffd76a",
-                    fontSize:
-                      "12px",
-                    fontWeight:
-                      "700",
-                  }}
-                >
-                  {
-                    selectedOrder.pickup_status
-                  }
-                </span>
-              </div>
-            </div>
-
-            <div
-              style={{
-                border:
-                  "1px solid #202938",
-                borderRadius:
-                  "18px",
-                padding:
-                  "20px",
-                marginBottom:
-                  "18px",
-              }}
-            >
-              <h3
-                style={{
-                  margin:
-                    "0 0 18px",
-                  fontSize:
-                    "16px",
-                }}
-              >
-                Customer Information
-              </h3>
-
-              <div
-                style={{
-                  display:
-                    "grid",
-                  gridTemplateColumns:
-                    "1fr 1fr",
-                  gap: "18px",
-                }}
-              >
-                <div>
-                  <div
-                    style={{
-                      color:
-                        "#687384",
-                      fontSize:
-                        "11px",
-                      marginBottom:
-                        "6px",
-                    }}
-                  >
-                    CUSTOMER NAME
-                  </div>
-
-                  <div>
-                    {
-                      selectedOrder.customer_name
-                    }
-                  </div>
-                </div>
-
-                <div>
-                  <div
-                    style={{
-                      color:
-                        "#687384",
-                      fontSize:
-                        "11px",
-                      marginBottom:
-                        "6px",
-                    }}
-                  >
-                    PHONE
-                  </div>
-
-                  <div>
-                    {
-                      selectedOrder.phone
-                    }
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div
-              style={{
-                border:
-                  "1px solid #202938",
-                borderRadius:
-                  "18px",
-                padding:
-                  "20px",
-                marginBottom:
-                  "18px",
-              }}
-            >
-              <h3
-                style={{
-                  margin:
-                    "0 0 18px",
-                  fontSize:
-                    "16px",
-                }}
-              >
-                Laundry Information
-              </h3>
-
-              <div
-                style={{
-                  display:
-                    "grid",
-                  gridTemplateColumns:
-                    "1fr 1fr",
-                  gap: "18px",
-                }}
-              >
-                <div>
-                  <div
-                    style={{
-                      color:
-                        "#687384",
-                      fontSize:
-                        "11px",
-                      marginBottom:
-                        "6px",
-                    }}
-                  >
-                    SERVICE
-                  </div>
-
-                  <div>
-                    {
-                      selectedOrder.service
-                    }
-                  </div>
-                </div>
-
-                <div>
-                  <div
-                    style={{
-                      color:
-                        "#687384",
-                      fontSize:
-                        "11px",
-                      marginBottom:
-                        "6px",
-                    }}
-                  >
-                    CLOTHES
-                  </div>
-
-                  <div>
-                    {
-                      selectedOrder.clothes
-                    }{" "}
-                    items
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div
-              style={{
-                background:
-                  "#111722",
-                border:
-                  "1px solid #202938",
-                borderRadius:
-                  "18px",
-                padding:
-                  "20px",
-                marginBottom:
-                  "24px",
-              }}
-            >
-              <div
-                style={{
-                  color:
-                    "#687384",
-                  fontSize:
-                    "11px",
-                  marginBottom:
-                    "8px",
-                }}
-              >
-                TRACKING ID
-              </div>
-
-              <div
-                style={{
-                  fontSize:
-                    "20px",
-                  fontWeight:
-                    "700",
-                  letterSpacing:
-                    "2px",
-                }}
-              >
-                {selectedOrder.tracking_id ||
-                  "Not available"}
-              </div>
-            </div>
-
-            <button
-              onClick={() =>
-                setSelectedOrder(
-                  null
-                )
-              }
-              style={{
-                width: "100%",
-                padding:
-                  "14px",
-                border:
-                  "none",
-                borderRadius:
-                  "12px",
-                background:
-                  "#fff",
-                color:
-                  "#080b12",
-                fontWeight:
-                  "700",
-                cursor:
-                  "pointer",
-              }}
-            >
-              CLOSE DETAILS
-            </button>
-          </div>
-        </div>
-      )}
+      <style jsx global>{`
+        :root { color-scheme: light; }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; min-height: 100%; }
+        body { background: #fbf9ff; color: #40364f; font-family: Arial, Helvetica, sans-serif; }
+        button, input, select { font: inherit; }
+        button, a, select { -webkit-tap-highlight-color: transparent; }
+        .adminPage {
+          min-height: 100vh; position: relative; overflow: hidden;
+          background: linear-gradient(135deg, #fbf9ff 0%, #f2ecfa 48%, #fffaf5 100%);
+          color: #40364f; isolation: isolate;
+        }
+        .ambient { position: absolute; width: 390px; height: 390px; border-radius: 50%; filter: blur(95px); opacity: .26; pointer-events: none; z-index: -1; }
+        .ambientOne { top: 80px; left: -180px; background: #ddcbed; }
+        .ambientTwo { top: 380px; right: -180px; background: #f1dbea; }
+        .topbar {
+          height: 82px; padding: 0 clamp(20px, 5vw, 76px); display: flex;
+          justify-content: space-between; align-items: center; gap: 20px;
+          border-bottom: 1px solid #e9def2; background: rgba(255, 252, 255, .8);
+          backdrop-filter: blur(18px); position: relative;
+        }
+        .brand { display: flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
+        .brandMark { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 14px; background: linear-gradient(140deg, #f4eafb, #ded0ed); border: 1px solid #dfd0ec; color: #79648e; font-size: 23px; font-weight: 800; }
+        .brand strong { display: block; font-size: 18px; letter-spacing: 4px; }
+        .brand small { display: block; color: #9888a5; font-size: 9px; letter-spacing: 2px; margin-top: 4px; }
+        .topbarRight { display: flex; align-items: center; gap: 10px; color: #897a98; font-size: 10px; letter-spacing: 1.5px; }
+        .liveDot { width: 7px; height: 7px; background: #a4c6ad; border-radius: 50%; box-shadow: 0 0 0 4px #e8f2e9; }
+        .siteLink { margin-left: 12px; text-decoration: none; color: #6f5a84; background: #f4edf9; border: 1px solid #e4d7ef; border-radius: 10px; padding: 11px 14px; letter-spacing: 0; font-size: 12px; transition: .25s ease; }
+        .siteLink:hover { transform: translateY(-2px); background: #eee3f7; }
+        .mainContent { width: min(1440px, 100%); margin: 0 auto; padding: 54px clamp(18px, 5vw, 76px) 32px; }
+        .intro { display: flex; justify-content: space-between; align-items: end; gap: 25px; margin-bottom: 32px; }
+        .eyebrow { margin: 0 0 14px; font-size: 10px; font-weight: 700; letter-spacing: 2.3px; color: #9a87ac; }
+        .intro h1 { font-size: clamp(38px, 5vw, 62px); letter-spacing: -2.8px; line-height: 1; margin: 0; font-weight: 700; }
+        .intro h1 span, .panelHeader h2 span { color: #aa95bf; }
+        .subtitle { color: #8b7d98; margin: 14px 0 0; font-size: 14px; line-height: 1.7; }
+        .refreshButton { border: 1px solid #e1d2ed; border-radius: 12px; background: linear-gradient(135deg, #f5effa, #e7d9f2); color: #5b486d; padding: 13px 17px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: .25s ease; box-shadow: 0 5px 15px #bca7d31c; }
+        .refreshButton:hover { transform: translateY(-2px); box-shadow: 0 9px 22px #bca7d333; }
+        .refreshButton:disabled { opacity: .65; cursor: wait; }
+        .refreshIcon { display: inline-block; font-size: 17px; margin-right: 8px; vertical-align: -1px; }
+        .spinning { animation: rotate 1s linear infinite; }
+        .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 28px; }
+        .stat { min-height: 135px; padding: 23px; border: 1px solid #e8def2; border-radius: 17px; background: linear-gradient(145deg, rgba(255,255,255,.94), rgba(250,245,253,.82)); box-shadow: 0 10px 30px #977eb512; position: relative; overflow: hidden; transition: transform .3s ease, box-shadow .3s ease; }
+        .stat:after { content: ""; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 25%, #ffffff65 48%, transparent 68%); background-size: 220% 100%; animation: gleam 9s ease-in-out infinite; pointer-events: none; }
+        .stat:hover { transform: translateY(-3px); box-shadow: 0 15px 32px #977eb526; }
+        .statLabel { display: block; color: #9584a4; font-size: 9px; letter-spacing: 1.7px; font-weight: 700; }
+        .stat strong { display: block; margin-top: 14px; font-size: 34px; line-height: 1; letter-spacing: -1px; }
+        .statHint { display: block; margin-top: 9px; color: #aa9db5; font-size: 11px; }
+        .notice, .error { border-radius: 11px; padding: 13px 16px; margin-bottom: 16px; font-size: 13px; }
+        .notice { background: #edf6ee; color: #4d7856; border: 1px solid #d8eadb; }
+        .error { background: #fff1f4; color: #963c5a; border: 1px solid #f0ccd8; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .ordersPanel { border: 1px solid #e7dcef; border-radius: 19px; background: rgba(255, 253, 255, .88); box-shadow: 0 15px 45px #977eb512; overflow: hidden; }
+        .panelHeader { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 25px 25px 22px; border-bottom: 1px solid #eee4f4; }
+        .panelHeader .eyebrow { margin-bottom: 9px; }
+        .panelHeader h2 { margin: 0; font-size: 25px; letter-spacing: -.8px; }
+        .filters { display: flex; gap: 10px; min-width: min(540px, 58%); }
+        .filters input, .filters select { min-width: 0; border: 1px solid #e1d3ed; border-radius: 10px; padding: 11px 12px; background: #fffaff; color: #51415f; outline: none; }
+        .filters input { flex: 1; }
+        .filters input::placeholder { color: #b0a3bb; }
+        .filters input:focus, .filters select:focus, .statusSelect:focus { border-color: #b9a4d6; box-shadow: 0 0 0 3px #b9a4d624; }
+        .tableWrap { width: 100%; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; min-width: 1000px; text-align: left; }
+        th { background: #faf6fd; color: #9988a8; font-size: 9px; letter-spacing: 1.5px; font-weight: 700; padding: 15px 17px; white-space: nowrap; }
+        td { padding: 18px 17px; border-top: 1px solid #f0e8f5; font-size: 12px; color: #766783; vertical-align: middle; }
+        tbody tr { transition: background .2s ease; }
+        tbody tr:hover { background: #fcf8ff; }
+        td strong { display: block; color: #51415f; font-size: 12px; font-weight: 700; }
+        td .tracking { color: #806797; letter-spacing: .3px; }
+        .subline { display: block; color: #aa9db5; font-size: 10px; margin-top: 6px; }
+        .statusSelect { max-width: 165px; width: 100%; border: 1px solid #e1d3ed; border-radius: 9px; padding: 9px 27px 9px 10px; background: #f8f2fc; color: #69547c; font-size: 11px; outline: none; cursor: pointer; transition: .2s ease; }
+        .pickupSelect { background: #fbf5fb; }
+        .statusSelect:disabled { opacity: .6; cursor: wait; }
+        .empty { min-height: 230px; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 35px; text-align: center; color: #9c8bab; }
+        .emptySpark { font-size: 32px; color: #b9a4d6; margin-bottom: 10px; }
+        .empty strong { color: #5a4869; font-size: 15px; }
+        .empty p { font-size: 12px; line-height: 1.7; margin-bottom: 0; }
+        .footnote { display: flex; justify-content: space-between; gap: 15px; color: #a393b1; font-size: 10px; letter-spacing: .3px; margin: 23px 2px 0; }
+        .footnote span { letter-spacing: 1px; }
+        @keyframes gleam { 0%, 70% { background-position: 180% 0; } 100% { background-position: -180% 0; } }
+        @keyframes rotate { to { transform: rotate(360deg); } }
+        @media (max-width: 1000px) { .stats { grid-template-columns: repeat(2, minmax(0,1fr)); } .panelHeader { align-items: stretch; flex-direction: column; } .filters { min-width: 0; width: 100%; } }
+        @media (max-width: 620px) { .topbar { height: auto; min-height: 75px; padding: 14px 18px; align-items: flex-start; } .topbarRight { flex-wrap: wrap; justify-content: flex-end; font-size: 8px; } .liveText { display: none; } .siteLink { margin-left: 0; padding: 9px 10px; } .mainContent { padding-top: 35px; } .intro { align-items: flex-start; flex-direction: column; } .intro h1 { letter-spacing: -1.8px; } .stats { gap: 10px; } .stat { padding: 17px; min-height: 120px; } .stat strong { font-size: 29px; } .filters { flex-direction: column; } .panelHeader { padding: 20px; } .footnote { flex-direction: column; } }
+        @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
+      `}</style>
     </main>
   );
 }

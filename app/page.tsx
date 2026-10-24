@@ -266,6 +266,13 @@ export default function Home() {
       return;
     }
 
+    if (!/^\d{10}$/.test(form.phone)) {
+      showNotification(
+        "Phone number must be exactly 10 digits."
+      );
+      return;
+    }
+
     if (Number(form.clothes) <= 0) {
       showNotification(
         "Number of clothes must be greater than 0."
@@ -1228,11 +1235,14 @@ export default function Home() {
                   onChange={(e) =>
                     setForm({
                       ...form,
-                      phone: e.target.value,
+                      phone: e.target.value.replace(/\D/g, "").slice(0, 10),
                     })
                   }
-                  placeholder="Enter phone number"
+                  placeholder="Enter 10-digit phone number"
                   type="tel"
+                  inputMode="numeric"
+                  maxLength={10}
+                  pattern="[0-9]{10}"
                 />
               </label>
 
@@ -2659,6 +2669,399 @@ export default function Home() {
             align-items: flex-start;
           }
         }
+
+        /* LIGHT PEARL LAVENDER THEME — consistent light surfaces and readable text */
+        :root {
+          --pearl-lavender: #B9ACD7;
+          --pearl-lavender-light: #E8E0F4;
+          --pearl-lavender-soft: #F1ECF8;
+          --pearl-lavender-line: #D8CDE9;
+          --dark-surface: #FFFFFF;
+          --dark-surface-raised: #F8F5FC;
+          --main-text: #30283D;
+          --muted-text: #716780;
+        }
+
+        html { scroll-behavior: smooth; }
+        body {
+          background: #F8F6FC !important;
+          color: #30283D !important;
+        }
+        .page {
+          color: #30283D !important;
+          background:
+            radial-gradient(circle at 12% 7%, rgba(185, 172, 215, 0.22), transparent 30%),
+            radial-gradient(circle at 88% 24%, rgba(232, 224, 244, 0.70), transparent 34%),
+            #F8F6FC !important;
+        }
+        .background { opacity: 0.16 !important; }
+        .orb { opacity: 0.12 !important; }
+        .orbOne { background: #B9ACD7 !important; }
+        .orbTwo { background: #E8E0F4 !important; }
+        .grid {
+          opacity: 0.025 !important;
+          background-image:
+            linear-gradient(rgba(128, 108, 165, 0.18) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(128, 108, 165, 0.18) 1px, transparent 1px) !important;
+        }
+        .navbar {
+          background: rgba(255, 255, 255, 0.90) !important;
+          color: #30283D !important;
+          border-bottom: 1px solid #E5DDEF !important;
+          backdrop-filter: blur(16px);
+        }
+        .logoIcon, .machineIcon, .bubble, .stepNumber {
+          background: #EEE8F7 !important;
+          color: #756293 !important;
+          border: 1px solid #D8CDE9 !important;
+        }
+        .logoSub, .eyebrow, .sectionEyebrow, .muted, .subText,
+        .machineSub, .statLabel, .historyMeta, .footer, .navButton {
+          color: #716780 !important;
+        }
+        .eyebrow span { background: #A997CB !important; }
+        .navButton.active, .navButton:hover, .secondaryButton:hover,
+        .refreshButton:hover, .closeButton:hover {
+          background: #EAE3F5 !important;
+          color: #3E3155 !important;
+        }
+        .bookButton, .primaryButton, .submitButton, .primaryAction,
+        .reserveButton, .b1 {
+          background: linear-gradient(135deg, #C9BCE2 0%, #B5A4D4 100%) !important;
+          color: #302541 !important;
+          border: 1px solid #B9A9D7 !important;
+          box-shadow: 0 6px 18px rgba(137, 113, 177, 0.13) !important;
+        }
+        .secondaryButton, .navButton, .refreshButton, .closeButton, .b2, .b3 {
+          background: #F5F1FA !important;
+          color: #5D4C78 !important;
+          border: 1px solid #D8CDE9 !important;
+        }
+        .machineCard, .statCard, .historyCard, .orderPanel, .bookingModal,
+        .infoCard, .stepCard, .trackingBox, .statusTimeline, .historyFooter,
+        .infoSection, .historyFooter, .notification {
+          background: #FFFFFF !important;
+          color: #30283D !important;
+          border-color: #E3DCEC !important;
+          box-shadow: 0 8px 26px rgba(74, 57, 103, 0.055) !important;
+        }
+        .queueBadge, .liveBadge, .statusBadge, .statusPill, .statusStep {
+          background: #EEE8F7 !important;
+          color: #5D4C78 !important;
+          border-color: #D8CDE9 !important;
+        }
+        .progressTrack { background: #EAE4F2 !important; }
+        .progressFill, .statusLine.completed, .statusDot.completed {
+          background: linear-gradient(90deg, #CFC3E5, #A997CB) !important;
+          border-color: #B9ACD7 !important;
+        }
+        .completedStatus, .statusCompleted, .successText {
+          color: #655184 !important;
+        }
+        input, select, textarea {
+          background: #FFFFFF !important;
+          color: #30283D !important;
+          border: 1px solid #D8CDE9 !important;
+          border-radius: 10px;
+        }
+        input::placeholder, textarea::placeholder { color: #8C829C !important; }
+        input:focus, select:focus, textarea:focus {
+          outline: 2px solid rgba(169, 151, 203, 0.22) !important;
+          border-color: #A997CB !important;
+        }
+        .notificationText, .notificationTitle { color: #30283D !important; }
+        .errorBox {
+          background: #F4EEF9 !important;
+          color: #49365F !important;
+          border-color: #D8CDE9 !important;
+        }
+        a { color: #756293 !important; }
+        .footer, .infoSection, .historyFooter { border-color: #E3DCEC !important; }
+        .statCard *, .historyCard *, .machineCard *, .stepCard *, .infoCard *,
+        .orderPanel *, .bookingModal *, .trackingBox *, .statusTimeline * {
+          color: inherit;
+        }
+        .statCard, .historyCard, .machineCard, .stepCard, .infoCard,
+        .orderPanel, .bookingModal, .trackingBox, .statusTimeline {
+          background-color: #FFFFFF !important;
+        }
+        .statCard h1, .statCard h2, .statCard h3, .historyCard h1,
+        .historyCard h2, .historyCard h3, .machineCard h1, .machineCard h2,
+        .machineCard h3, .stepCard h1, .stepCard h2, .stepCard h3,
+        .infoCard h1, .infoCard h2, .infoCard h3, .pageHeading, .historyHeading {
+          color: #30283D !important;
+        }
+        .notification {
+          color: #30283D !important;
+          border: 1px solid #D8CDE9 !important;
+        }
+        /* Smooth transitions for buttons, cards and interactive feedback */
+        button, a, .machineCard, .statCard, .historyCard, .orderPanel,
+        .navButton, input, select, textarea, .logoIcon, .machineIcon,
+        .stepNumber, .progressFill, .queueBadge, .liveBadge {
+          transition: background-color 300ms ease, color 300ms ease,
+            border-color 300ms ease, box-shadow 300ms ease,
+            transform 300ms cubic-bezier(0.2, 0.75, 0.25, 1) !important;
+        }
+        .machineCard:hover, .statCard:hover, .historyCard:hover, .orderPanel:hover {
+          border-color: #C7B8E0 !important;
+          box-shadow: 0 12px 30px rgba(101, 81, 132, 0.12) !important;
+          transform: translateY(-2px);
+        }
+        button:hover, .bookButton:hover, .primaryButton:hover, .submitButton:hover {
+          box-shadow: 0 9px 24px rgba(137, 113, 177, 0.18) !important;
+        }
+        /* Soft pearlescent shimmer: subtle, elegant, and not distracting */
+        .page {
+          background-image:
+            radial-gradient(circle at 12% 7%, rgba(185, 172, 215, 0.24), transparent 30%),
+            radial-gradient(circle at 88% 24%, rgba(232, 224, 244, 0.76), transparent 34%),
+            radial-gradient(circle at 18% 38%, rgba(255, 255, 255, 0.78) 0 1px, transparent 2px),
+            radial-gradient(circle at 76% 18%, rgba(255, 255, 255, 0.86) 0 1px, transparent 2px),
+            radial-gradient(circle at 63% 68%, rgba(185, 172, 215, 0.20) 0 1px, transparent 2px),
+            radial-gradient(circle at 92% 82%, rgba(255, 255, 255, 0.82) 0 1px, transparent 2px),
+            #F8F6FC !important;
+          background-size: auto, auto, 230px 260px, 290px 310px, 330px 350px, 270px 290px, auto !important;
+          animation: pearlBackdropGlow 12s ease-in-out infinite alternate;
+        }
+        @keyframes pearlBackdropGlow {
+          from { background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0; }
+          to { background-position: 0 0, 0 0, 16px 12px, -12px 18px, 10px -14px, -14px -8px, 0 0; }
+        }
+        .bookButton, .primaryButton, .submitButton, .primaryAction, .reserveButton, .b1 {
+          position: relative;
+          overflow: hidden;
+          isolation: isolate;
+          animation: pearlButtonGlow 5s ease-in-out infinite;
+        }
+        .bookButton::after, .primaryButton::after, .submitButton::after,
+        .primaryAction::after, .reserveButton::after, .b1::after {
+          content: "";
+          position: absolute;
+          inset: -40% auto -40% -70%;
+          width: 36%;
+          transform: skewX(-22deg);
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.58), transparent);
+          animation: pearlSheen 6.5s ease-in-out infinite;
+          pointer-events: none;
+        }
+        @keyframes pearlSheen {
+          0%, 58% { left: -70%; opacity: 0; }
+          66% { opacity: 0.8; }
+          86%, 100% { left: 140%; opacity: 0; }
+        }
+        @keyframes pearlButtonGlow {
+          0%, 100% { box-shadow: 0 6px 18px rgba(137, 113, 177, 0.12); }
+          50% { box-shadow: 0 8px 24px rgba(169, 151, 203, 0.22); }
+        }
+        .machineCard, .statCard, .historyCard, .stepCard, .infoCard, .orderPanel {
+          transition: transform 320ms cubic-bezier(0.2, 0.75, 0.25, 1),
+            box-shadow 320ms ease, border-color 320ms ease !important;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .page, .bookButton, .primaryButton, .submitButton, .primaryAction,
+          .reserveButton, .b1, .bookButton::after, .primaryButton::after,
+          .submitButton::after, .primaryAction::after, .reserveButton::after, .b1::after {
+            animation: none !important;
+          }
+        }
+
+        /* Fix dark tracking/progress elements: keep every step readable on the light pearl theme */
+        .statusArea, .statusTimeline, .statusStep,
+        .currentStatus, .timestamps, .trackingBox,
+        .statusTitle, .statusName {
+          background: rgba(255, 255, 255, 0.72) !important;
+          color: #514765 !important;
+          border-color: #E1D8EF !important;
+        }
+        .statusTimeline {
+          border: 1px solid #E1D8EF !important;
+          border-radius: 18px !important;
+          padding: 18px 14px !important;
+        }
+        .statusStep {
+          box-shadow: none !important;
+          background: transparent !important;
+          color: #514765 !important;
+        }
+        .statusName {
+          background: transparent !important;
+          color: #655A78 !important;
+          font-weight: 600 !important;
+        }
+        .statusDot {
+          background: linear-gradient(145deg, #FFFFFF, #E7DFF3) !important;
+          color: #766396 !important;
+          border: 1px solid #CFC2E4 !important;
+          box-shadow: 0 3px 10px rgba(143, 122, 177, 0.12) !important;
+        }
+        .statusDot.completed {
+          background: linear-gradient(145deg, #DCD0EF, #B9A8D8) !important;
+          color: #3D3153 !important;
+          border-color: #B9A8D8 !important;
+        }
+        .statusLine {
+          background: #E7E0F0 !important;
+          border-color: #E7E0F0 !important;
+        }
+        .statusLine.completed {
+          background: linear-gradient(90deg, #D8CBEA, #AFA0D0) !important;
+          border-color: #B9A8D8 !important;
+        }
+        .currentStatus > div, .timestamps > div {
+          background: #F8F6FC !important;
+          color: #514765 !important;
+          border: 1px solid #E7E0F0 !important;
+          border-radius: 12px !important;
+        }
+        .currentStatus span, .timestamps span {
+          color: #807491 !important;
+        }
+        .currentStatus strong, .timestamps strong {
+          color: #403650 !important;
+        }
+        .washingCircle {
+          background: linear-gradient(145deg, rgba(255,255,255,.96), rgba(232,224,244,.92)) !important;
+          border: 1px solid rgba(185,172,215,.6) !important;
+          box-shadow: 0 12px 36px rgba(137,113,177,.12), inset 0 1px 0 rgba(255,255,255,.9) !important;
+          color: #514765 !important;
+        }
+        .washingCircle strong, .washingCircle span {
+          color: #514765 !important;
+        }
+        /* Gentle motion across the tracking flow and pearl sparkle, without harsh flashing */
+        .statusDot.completed {
+          animation: pearlStepPulse 3.8s ease-in-out infinite;
+        }
+        .statusLine.completed {
+          background-size: 200% 100% !important;
+          animation: pearlLineFlow 4.5s linear infinite;
+        }
+        .statusTimeline, .washingCircle {
+          animation: pearlCardFloat 8s ease-in-out infinite;
+        }
+        .page::before, .page::after {
+          pointer-events: none !important;
+        }
+        @keyframes pearlStepPulse {
+          0%, 100% { box-shadow: 0 3px 10px rgba(143,122,177,.12); }
+          50% { box-shadow: 0 4px 15px rgba(169,151,203,.25); }
+        }
+        @keyframes pearlLineFlow {
+          from { background-position: 100% 0; }
+          to { background-position: -100% 0; }
+        }
+        @keyframes pearlCardFloat {
+          0%, 100% { box-shadow: 0 8px 26px rgba(74,57,103,.045); }
+          50% { box-shadow: 0 10px 30px rgba(169,151,203,.10); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .statusDot.completed, .statusLine.completed, .statusTimeline, .washingCircle {
+            animation: none !important;
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            transition-duration: 0.01ms !important;
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            scroll-behavior: auto !important;
+          }
+        }
+
+        /* FINAL FIX: readable pearl-lavender tracking steps and soft shimmer */
+        .statusArea {
+          background: transparent !important;
+          color: #4B4260 !important;
+        }
+        .statusTitle {
+          color: #403650 !important;
+          font-weight: 700 !important;
+        }
+        .statusTimeline {
+          background: linear-gradient(135deg, #FBF9FF 0%, #F1ECFA 55%, #F9F6FF 100%) !important;
+          border: 1px solid #D8CDEB !important;
+          box-shadow: 0 10px 30px rgba(128, 105, 164, .10), inset 0 1px 0 rgba(255,255,255,.95) !important;
+        }
+        .statusStep {
+          background: transparent !important;
+          color: #514765 !important;
+          border: 0 !important;
+          box-shadow: none !important;
+          transition: transform 420ms cubic-bezier(.22,.8,.25,1), opacity 420ms ease !important;
+        }
+        .statusStep:hover { transform: translateY(-3px) !important; }
+        .statusName {
+          color: #554968 !important;
+          background: transparent !important;
+          text-shadow: 0 1px 0 rgba(255,255,255,.8) !important;
+          font-weight: 650 !important;
+        }
+        .statusDot {
+          background: linear-gradient(145deg, #FFFFFF 0%, #F0EAF9 52%, #DCD0EF 100%) !important;
+          color: #655184 !important;
+          border: 1px solid #CBBDE2 !important;
+          box-shadow: 0 4px 12px rgba(129, 105, 165, .16), inset 0 1px 2px rgba(255,255,255,.95) !important;
+          transition: background 500ms ease, color 500ms ease, box-shadow 500ms ease, transform 500ms cubic-bezier(.22,.8,.25,1) !important;
+        }
+        .statusDot.completed {
+          background: linear-gradient(145deg, #DCD0F0 0%, #C7B5E4 48%, #EDE5F8 100%) !important;
+          color: #3F3155 !important;
+          border-color: #BBA8D9 !important;
+          box-shadow: 0 4px 16px rgba(143, 115, 184, .24), inset 0 1px 2px rgba(255,255,255,.9) !important;
+          animation: pearlStepPulse 4.8s ease-in-out infinite !important;
+        }
+        .statusLine {
+          background: linear-gradient(90deg, #E9E1F3, #DCD2EB, #E9E1F3) !important;
+          border-color: #E0D6EF !important;
+          background-size: 200% 100% !important;
+          transition: background 650ms ease, border-color 650ms ease !important;
+        }
+        .statusLine.completed {
+          background: linear-gradient(90deg, #CBB9E4 0%, #F5F0FC 48%, #B8A2D8 100%) !important;
+          background-size: 220% 100% !important;
+          animation: pearlLineFlow 6s ease-in-out infinite !important;
+        }
+        .washingCircle {
+          background: radial-gradient(circle at 34% 22%, #FFFFFF 0%, #F5F0FC 28%, #E5DCF3 60%, #C8B8E2 100%) !important;
+          border: 1px solid rgba(191, 174, 220, .85) !important;
+          box-shadow: 0 18px 44px rgba(137, 113, 177, .18), inset 0 2px 5px rgba(255,255,255,.96), inset 0 -8px 18px rgba(156,132,194,.12) !important;
+          color: #4D4164 !important;
+        }
+        .circleLabel strong, .circleLabel span, .washingCircle strong, .washingCircle span {
+          color: #4D4164 !important;
+          text-shadow: 0 1px 0 rgba(255,255,255,.85) !important;
+        }
+        .water { background: linear-gradient(145deg, rgba(255,255,255,.7), rgba(206,190,231,.42)) !important; }
+        .bubble { background: linear-gradient(145deg, #FFFFFF, #D9CBEF) !important; box-shadow: 0 4px 12px rgba(155,132,191,.2) !important; }
+        .statCard, .stepCard, .infoCard, .machineCard, .historyCard, .orderPanel {
+          background: linear-gradient(145deg, rgba(255,255,255,.98), rgba(247,243,253,.96)) !important;
+          border-color: #E2D9EF !important;
+          transition: transform 480ms cubic-bezier(.22,.8,.25,1), box-shadow 480ms ease, border-color 480ms ease !important;
+        }
+        button, a, input, select, textarea {
+          transition: color 420ms ease, background-color 420ms ease, border-color 420ms ease, box-shadow 420ms ease, transform 420ms cubic-bezier(.22,.8,.25,1) !important;
+        }
+        .bookButton, .primaryButton, .submitButton, .primaryAction, .reserveButton, .b1 {
+          background: linear-gradient(115deg, #CFC1E5 0%, #B8A5D8 42%, #E4DAF2 70%, #B8A5D8 100%) !important;
+          background-size: 220% 100% !important;
+          color: #382A4B !important;
+          border: 1px solid #BBA8D9 !important;
+          animation: pearlButtonGlow 6s ease-in-out infinite, pearlLineFlow 9s ease-in-out infinite !important;
+        }
+        .stepCard:hover, .infoCard:hover, .machineCard:hover, .statCard:hover, .historyCard:hover {
+          transform: translateY(-3px) !important;
+          box-shadow: 0 14px 32px rgba(128, 105, 164, .13) !important;
+          border-color: #C7B5E2 !important;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .statusDot.completed, .statusLine.completed, .bookButton, .primaryButton,
+          .submitButton, .primaryAction, .reserveButton, .b1 {
+            animation: none !important;
+          }
+        }
+
       `}</style>
     </main>
   );
